@@ -56,3 +56,8 @@ debugger:
   twig: true
   shutdown:
     close_connection: true
+
+strict_mode:
+  yaml_compat: true
+  twig_compat: true
+  blueprint_compat: true
