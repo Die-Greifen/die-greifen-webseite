@@ -1,16 +1,16 @@
-title: Receptar
-description: "A very delicious blog."
+title: 'Gefährten des Greifen e.V.'
+description: "The webpage of the association Gefährten des Greifen e.V."
 author:
-  name: Grav
-  email: 'joe@test.com'
+  name: 'Théophile MADET'
+  email: 'theo.madet@posteo.net'
   url: http://getgrav.org/
   logo:
-  gravatar: contact@getgrav.org
-  description: "Morbi leo risus, porta ac consectetur ac, vestibulum at eros. Fusce dapibus, tellus ac cursus commodo, tortor mauris condimentum nibh, ut fermentum massa justo sit amet risus."
+  gravatar: 
+  description: ""
 blog:
   route: ''
 metadata:
-    description: 'Receptar is a minimal Theme designed for blogger, converted to Grav.'
+    description: 'The webpage of the association Gefährten des Greifen e.V. Based on the Receptar theme for Grav'
 taxonomies: [category,tag,month]
 
 summary:
@@ -18,31 +18,19 @@ summary:
   striptags: true
 
 # Image must be uploaded to your theme /images/ directory.
-global_featured_image: featured.jpg
+global_featured_image: Greifen-Logo.jpg
 
 social:
   - text: facebook
-    url: "http://www.facebook.com/getgrav"
-  - text: twitter
-    url: "http://www.twitter.com/getgrav"
-  - text: google-plus
-    url: "http://www.plus.google.com/getgrav"
-  - text: linkedin
-    url: "http://www.linkedin.com/getgrav"
-  - text: youtube-play
-    url: "http://www.youtube.com/getgrav"
+    url: "https://www.facebook.com/Gef%C3%A4hrten-des-Greifen-eV-147461145324528"
+  - text: instagram
+    url: "https://www.instagram.com/leloupblanc.ceramique/"
   - text: home
-    url: "http://www.getgrav.org"
+    url: "http://diegreifen.de/"
 
 slider:
-  - image: slide3.jpg
-    title: A very delicious blog
-    url: "#"
-  - image: slide1.jpg
-    title: Duis autem
-    url: "#"
-  - image: slide2.jpg
-    title: Pumpkin recipe
+  - image: Banner.jpg
+    title: Die Gefährten des Greifen
     url: "#"
 
 menu:
@@ -50,4 +38,4 @@ menu:
     text: Error Page
 
 # Copyright
-copyright: Designed and developed by <a title="WebMan WordPress Themes" href="http://www.webmandesign.eu/"><strong>WebMan Design</strong></a>, Ported By <a href="http://www.getgrav.org" rel="dofollow" target="_blank" title="Grav">Grav Team</a>
+copyright: Developed by <strong>Théophile Madet</strong>, based on the Receptar theme and <a href="http://www.getgrav.org" rel="dofollow" target="_blank" title="Grav">Grav</a>
