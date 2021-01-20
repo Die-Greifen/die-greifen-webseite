@@ -17,7 +17,8 @@ http_x_forwarded:
 languages:
   supported:
     - de
-  default_lang: null
+    - en
+  default_lang: en
   include_default_lang: true
   include_default_lang_file_extension: true
   translations: true

@@ -1,41 +1,45 @@
 title: 'Gefährten des Greifen e.V.'
-description: "The webpage of the association Gefährten des Greifen e.V."
+default_lang: de
 author:
   name: 'Théophile MADET'
-  email: 'theo.madet@posteo.net'
-  url: http://getgrav.org/
-  logo:
-  gravatar: 
-  description: ""
+  email: theo.madet@posteo.net
+  url: 'http://getgrav.org/'
+  description: ''
+taxonomies:
+  - category
+  - tag
+  - month
+metadata:
+  description: 'The webpage of the association Gefährten des Greifen e.V. Based on the Receptar theme for Grav'
+summary:
+  enabled: true
+  format: short
+  size: 100
+  delimiter: '==='
+  striptags: true
+redirects: null
+routes: null
 blog:
   route: ''
-metadata:
-    description: 'The webpage of the association Gefährten des Greifen e.V. Based on the Receptar theme for Grav'
-taxonomies: [category,tag,month]
-
-summary:
-  size: 100
-  striptags: true
-
-# Image must be uploaded to your theme /images/ directory.
+description: 'The webpage of the association Gefährten des Greifen e.V.'
 global_featured_image: Greifen-Logo.jpg
-
 social:
-  - text: facebook
-    url: "https://www.facebook.com/Gef%C3%A4hrten-des-Greifen-eV-147461145324528"
-  - text: instagram
-    url: "https://www.instagram.com/leloupblanc.ceramique/"
-  - text: home
-    url: "http://diegreifen.de/"
-
+  -
+    text: facebook
+    url: 'https://www.facebook.com/Gef%C3%A4hrten-des-Greifen-eV-147461145324528'
+  -
+    text: instagram
+    url: 'https://www.instagram.com/leloupblanc.ceramique/'
+  -
+    text: home
+    url: 'http://diegreifen.de/'
 slider:
-  - image: Banner.jpg
-    title: Die Gefährten des Greifen
-    url: "#"
-
+  -
+    image: Banner.jpg
+    title: 'Die Gefährten des Greifen'
+    url: '#'
 menu:
-  - url: error
-    text: Error Page
-
-# Copyright
-copyright: Developed by <strong>Théophile Madet</strong>, based on the Receptar theme and <a href="http://www.getgrav.org" rel="dofollow" target="_blank" title="Grav">Grav</a>
+  -
+    url: error
+    text: 'Error Page'
+copyright: 'Developed by <strong>Théophile Madet</strong>, based on the Receptar theme and <a href="http://www.getgrav.org" rel="dofollow" target="_blank" title="Grav">Grav</a>'
