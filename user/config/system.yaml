@@ -18,13 +18,13 @@ languages:
   supported:
     - de
     - en
-  default_lang: en
-  include_default_lang: true
+  default_lang: null
+  include_default_lang: false
   include_default_lang_file_extension: true
   translations: true
   translations_fallback: true
   session_store_active: false
-  http_accept_language: true
+  http_accept_language: false
   override_locale: false
   content_fallback: {  }
   pages_fallback_only: false
@@ -32,7 +32,7 @@ languages:
     include_lang: true
     include_route: false
 home:
-  alias: /blog
+  alias: /home
   hide_in_urls: false
 pages:
   type: regular
