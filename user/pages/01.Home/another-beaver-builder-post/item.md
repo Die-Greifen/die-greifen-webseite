@@ -1,40 +1,49 @@
 ---
-title: Another Beaver Builder post
-date: 14:55 08/30/2014
+title: 'Another Beaver Builder post'
+date: '14:55 08/30/2014'
 description:
-  - option: Dificulty:
-    value: simple
-  - option: Serving:
-    value: 4
-  - option: Preparation time:
-    value: 1 hour 30 minutes
-  - option: What we need:
-    value: oven, tart form, jar
-
+    -
+        option: 'Dificulty:'
+        value: simple
+    -
+        option: 'Serving:'
+        value: 4
+    -
+        option: 'Preparation time:'
+        value: '1 hour 30 minutes'
+    -
+        option: 'What we need:'
+        value: 'oven, tart form, jar'
 ingredients_title: Ingredients
 ingredients:
-  - title: Corpus:
-    list:
-      - Lorem ipsum, 200g
-      - Dolor sit amet 20dl
-      - 80g sugar
-      - 1 yolk
-      - Salt
-      - Water 0.5l
-      - Milk 1l
-  - title: Corpus:
-    list:
-      - Lorem ipsum, 200g
-      - Dolor sit amet 20dl
-      - 80g sugar
-      - 1 yolk
-      - Salt
-      - Water 0.5l
-      - Milk 1l
+    -
+        title: 'Corpus:'
+        list:
+            - 'Lorem ipsum, 200g'
+            - 'Dolor sit amet 20dl'
+            - '80g sugar'
+            - '1 yolk'
+            - Salt
+            - 'Water 0.5l'
+            - 'Milk 1l'
+    -
+        title: 'Corpus:'
+        list:
+            - 'Lorem ipsum, 200g'
+            - 'Dolor sit amet 20dl'
+            - '80g sugar'
+            - '1 yolk'
+            - Salt
+            - 'Water 0.5l'
+            - 'Milk 1l'
 taxonomy:
-    category: Recipes
-    tag: [recipes, meat]
-vimeo: https://player.vimeo.com/video/63451562?title=0&amp;byline=0&amp;portrait=0
+    category:
+        - Recipes
+    tag:
+        - recipes
+        - meat
+vimeo: 'https://player.vimeo.com/video/63451562?title=0&amp;byline=0&amp;portrait=0'
+published: false
 ---
 
 ## INSTRUCTIONS

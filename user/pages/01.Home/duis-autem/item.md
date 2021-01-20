@@ -1,9 +1,16 @@
 ---
-title: Duis autem
-date: 14:55 08/27/2014
+title: 'Duis autem'
+date: '14:55 08/27/2014'
 taxonomy:
-    category: Cookies, Eating out, Recipes
-    tag: [cookies, eating out, recipes]
+    category:
+        - Cookies
+        - 'Eating out'
+        - Recipes
+    tag:
+        - recipes
+        - cookies
+        - 'eating out'
+published: false
 ---
 
 Lorem ipsum dolor sit amet, consectetuer adipiscing elit, sed diam nonummy nibh euismod tincidunt ut laoreet dolore magna aliquam erat volutpat. Ut wisi enim ad minim veniam, quis nostrud exerci tation ullamcorper suscipit lobortis nisl ut aliquip ex ea commodo consequat.

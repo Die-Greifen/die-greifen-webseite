@@ -1,39 +1,50 @@
 ---
-title: Beaver Builder post
+title: 'Beaver Builder post'
 description:
-  - option: Dificulty:
-    value: simple
-  - option: Serving:
-    value: 4
-  - option: Preparation time:
-    value: 1 hour 30 minutes
-  - option: What we need:
-    value: oven, tart form, jar
-date: 17:34 01/01/2015
+    -
+        option: 'Dificulty:'
+        value: simple
+    -
+        option: 'Serving:'
+        value: 4
+    -
+        option: 'Preparation time:'
+        value: '1 hour 30 minutes'
+    -
+        option: 'What we need:'
+        value: 'oven, tart form, jar'
+date: '17:34 01/01/2015'
 taxonomy:
-    category: Cakes
-    tag: [cakes, food, sugar, milk]
-
+    category:
+        - Cakes
+    tag:
+        - cakes
+        - food
+        - sugar
+        - milk
 ingredients_title: Ingredients
 ingredients:
-  - title: Corpus:
-    list:
-      - Lorem ipsum, 200g
-      - Dolor sit amet 20dl
-      - 80g sugar
-      - 1 yolk
-      - Salt
-      - Water 0.5l
-      - Milk 1l
-  - title: Corpus:
-    list:
-      - Lorem ipsum, 200g
-      - Dolor sit amet 20dl
-      - 80g sugar
-      - 1 yolk
-      - Salt
-      - Water 0.5l
-      - Milk 1l
+    -
+        title: 'Corpus:'
+        list:
+            - 'Lorem ipsum, 200g'
+            - 'Dolor sit amet 20dl'
+            - '80g sugar'
+            - '1 yolk'
+            - Salt
+            - 'Water 0.5l'
+            - 'Milk 1l'
+    -
+        title: 'Corpus:'
+        list:
+            - 'Lorem ipsum, 200g'
+            - 'Dolor sit amet 20dl'
+            - '80g sugar'
+            - '1 yolk'
+            - Salt
+            - 'Water 0.5l'
+            - 'Milk 1l'
+published: false
 ---
 
 ## Instrucions

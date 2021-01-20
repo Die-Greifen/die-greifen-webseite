@@ -1,9 +1,13 @@
 ---
-title: Comments disabled in this post
-date: 14:55 07/11/2014
+title: 'Comments disabled in this post'
+date: '14:55 07/11/2014'
 taxonomy:
-    category: Recipes
-    tag: [recipes, sushi]
+    category:
+        - Recipes
+    tag:
+        - recipes
+        - sushi
+published: false
 ---
 
 Lorem ipsum dolor sit amet, consectetuer adipiscing elit, sed diam nonummy nibh euismod tincidunt ut laoreet dolore magna aliquam erat volutpat. Ut wisi enim ad minim veniam, quis nostrud exerci tation ullamcorper suscipit lobortis nisl ut aliquip ex ea commodo consequat.

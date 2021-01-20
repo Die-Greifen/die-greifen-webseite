@@ -1,9 +1,13 @@
 ---
-title: Lorem ipsum dolor sit amet
-date: 14:55 08/26/2014
+title: 'Lorem ipsum dolor sit amet'
+date: '14:55 08/26/2014'
 taxonomy:
-    category: Meat
-    tag: [meat, recipes]
+    category:
+        - Meat
+    tag:
+        - recipes
+        - meat
+published: false
 ---
 
 Lorem ipsum dolor sit amet, consectetuer adipiscing elit, sed diam nonummy nibh euismod tincidunt ut laoreet dolore magna aliquam erat volutpat. Ut wisi enim ad minim veniam, quis nostrud exerci tation ullamcorper suscipit lobortis nisl ut aliquip ex ea commodo consequat.

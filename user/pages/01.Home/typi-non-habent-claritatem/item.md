@@ -1,9 +1,16 @@
 ---
-title: Typi non habent claritatem
-date: 14:55 08/29/2014
+title: 'Typi non habent claritatem'
+date: '14:55 08/29/2014'
 taxonomy:
-    category: Meat, Poultry, Recipes
-    tag: [meat, poultry, recipes]
+    category:
+        - Meat
+        - Poultry
+        - Recipes
+    tag:
+        - recipes
+        - meat
+        - poultry
+published: false
 ---
 
 Lorem ipsum dolor sit amet, consectetuer adipiscing elit, sed diam nonummy nibh euismod tincidunt ut laoreet dolore magna aliquam erat volutpat. Ut wisi enim ad minim veniam, quis nostrud exerci tation ullamcorper suscipit lobortis nisl ut aliquip ex ea commodo consequat.

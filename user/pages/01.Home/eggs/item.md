@@ -1,9 +1,14 @@
 ---
-title: Some eggs
-date: 13:34 08/23/2014
+title: 'Some eggs'
+date: '13:34 08/23/2014'
 taxonomy:
-    category: Cakes, Recipes
-    tag: [cakes, recipes]
+    category:
+        - Cakes
+        - Recipes
+    tag:
+        - recipes
+        - cakes
+published: false
 ---
 
 LOREM IPSUM DOLOR SIT AMET, CONSECTETUER ADIPISCING ELIT, SED DIAM UT LAOREET DOLORE MAGNA ALIQUAM ERAT VOLUTPAT.

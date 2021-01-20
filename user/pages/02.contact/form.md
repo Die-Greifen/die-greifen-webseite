@@ -52,5 +52,6 @@ form:
             message: 'Thank you for your feedback!'
         -
             display: thankyou
+published: false
 ---
 
