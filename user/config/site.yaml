@@ -1,4 +1,4 @@
-title: 'Gefährten des Greifen e.V.'
+title: 'Die Gefährten des Greifen e.V.'
 default_lang: de
 author:
   name: 'Théophile MADET'
@@ -36,7 +36,7 @@ social:
 slider:
   -
     image: Banner.jpg
-    title: 'Die Gefährten des Greifen'
+    title: ''
     url: '#'
 menu:
   -
