@@ -21,7 +21,7 @@ redirects: null
 routes: null
 blog:
   route: ''
-description: 'The webpage of the association Gefährten des Greifen e.V.'
+description: 'The webpage of the association Die Gefährten des Greifen e.V.'
 global_featured_image: Greifen-Logo.jpg
 social:
   -
