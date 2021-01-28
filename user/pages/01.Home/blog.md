@@ -8,5 +8,7 @@ sitemap:
 content:
     items: '@self.children'
 media_order: paulus.jpg
+banner: Banner.jpg
+
 ---
 
