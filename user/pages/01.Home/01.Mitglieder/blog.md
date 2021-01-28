@@ -11,5 +11,6 @@ taxonomy:
     tag:
         - cakes
         - cookies
+body_classes: hide-banner
 ---
 

@@ -1027,6 +1027,9 @@
 				position: relative;
 				margin-top: 29%;
 			}
+			.hide-banner.blog .content-area {
+				margin-top: 5rem;
+			}
 
 
 
