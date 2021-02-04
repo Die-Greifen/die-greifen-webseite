@@ -1,6 +1,6 @@
 # Die Gefährten des Greifen e.V.
 This is the code repository for the website of the association "Die Gefährten des Greifen e.V.". Below are technical information to help future members manage the website.
-If you're looking for user-friendly documentation on how to update the content of the website, refer to https://die-greifen.github.io/die-greifen-webseite/
+If you're looking for user-friendly documentation on how to update the content of the website, refer to https://die-greifen.github.io/die-greifen-webseite/index
 
 ## Grav
 The website is base on [Grav](https://getgrav.org/).
@@ -20,7 +20,7 @@ If the website needs to be hosted somewhere else :
 
 ## Documentation
 This README file contains the technical documentation. 
-The "docs" folder contains the user documentation, accessible with GitHub Pages [here](https://die-greifen.github.io/die-greifen-webseite/)
+The "docs" folder contains the user documentation, accessible with GitHub Pages [here](https://die-greifen.github.io/die-greifen-webseite/index)
 
 ## Updating content
 Some parts of the website can't be changed with through admin page and require to update the files manually. Don't forget to commit the changes to this repository.
