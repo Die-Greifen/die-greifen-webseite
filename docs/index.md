@@ -37,7 +37,6 @@ You can preview the result without saving it by clicking the eye on the top-righ
 You can add images to the page. First, drag&drop the image in the "Page Media" field below the text editing field. Then add the image to the text like so :
 ```markdown
 [ALT_TEXT](FILE_NAME)
-
 ```
 Replace ALT_TEXT with the alternative text that is displayed in case the image fails to load. It is also used by accessibility software.
 Replace FILE_NAME with the exact name of the file you placed in "Page Media".
