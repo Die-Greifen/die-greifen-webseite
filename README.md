@@ -14,9 +14,9 @@ Although the repository contains the page's content, changes made to said conten
 ## Hosting
 At the time of writing, the website is hosted on hosteurope.de on a WebHosting Medium.
 If the website needs to be hosted somewhere else :
-	* Access the current server with FTP. The credentials are available throught the hosteurope account. 
-	* Download the entire folder containing the website (probably /www/www.diegreifen.de/).
-	* Upload said folder to the new server
+- Access the current server with FTP. The credentials are available throught the hosteurope account. 
+- Download the entire folder containing the website (probably /www/www.diegreifen.de/).
+- Upload said folder to the new server
 
 ## Documentation
 This README file contains the technical documentation. 
@@ -25,12 +25,12 @@ The "docs" folder contains the user documentation, accessible with GitHub Pages 
 ## Updating content
 Some parts of the website can't be changed with through admin page and require to update the files manually. Don't forget to commit the changes to this repository.
 
-### Social media links
+#### Social media links
 Social media links are stored in user/config/site.yaml
 See [here](https://github.com/getgrav/grav-skeleton-receptar-site/blob/develop/config/site.yaml) for an example with more websites
 
-### Page title
+#### Page title
 The title at the very top of the page is under user/themes/receptar/languages.yaml
 
-### About
+#### About
 The content of the "About" part of the menu is under user/pages/sidebar/about/widget.md
