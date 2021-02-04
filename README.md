@@ -14,7 +14,7 @@ Although the repository contains the page's content, changes made to said conten
 ## Hosting
 At the time of writing, the website is hosted on hosteurope.de on a WebHosting Medium.
 If the website needs to be hosted somewhere else :
-- Access the current server with FTP. The credentials are available throught the hosteurope account. 
+- Access the current server with FTP. The credentials are available through the hosteurope account. 
 - Download the entire folder containing the website (probably /www/www.diegreifen.de/).
 - Upload said folder to the new server
 
