@@ -8,7 +8,7 @@ A special user has been created for updating the content of the website. Ask oth
 
 Once logged-in, go to "Pages" on the left menu.
 
-## Creating a new page
+## Creating a new page 
 You can create a new page with the "Add" button on the top right. 
 
 Once you fill in the title, the folder name is automatically generated. Don't change it.
