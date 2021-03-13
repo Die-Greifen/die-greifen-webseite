@@ -50,6 +50,11 @@ Replace BIG_WIDTH, BIG_HEIGHT, SMALL_WIDTH, SMALL_HEIGHT with the corresponding 
 ## Pages with sub-pages
 ### Content
 Pages with the "Blog" template, like the homepage or the Mitglieder page, don't have their own content. Instead they show a preview of their subpages.
+The Tile-View needs an extra step to be enabled : while editing the page, enable the Expert-mode with the corresponding button on the top right. Then, on the "Content" tab, there is a "Frontmatter" field. In this field, add the following lines :
+```yaml
+content:
+  items: '@self.children'
+```
 
 The text preview is automatically taken from the text content of the subpage.
 
