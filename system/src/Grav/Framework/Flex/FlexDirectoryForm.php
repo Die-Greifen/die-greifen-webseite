@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -15,6 +15,7 @@ use Grav\Common\Data\Blueprint;
 use Grav\Common\Data\Data;
 use Grav\Common\Grav;
 use Grav\Common\Twig\Twig;
+use Grav\Common\Utils;
 use Grav\Framework\Flex\Interfaces\FlexDirectoryFormInterface;
 use Grav\Framework\Flex\Interfaces\FlexFormInterface;
 use Grav\Framework\Form\Interfaces\FormFlashInterface;
@@ -94,8 +95,13 @@ class FlexDirectoryForm implements FlexDirectoryFormInterface, JsonSerializable
             $uniqueId = md5($directory->getFlexType() . '-directory-' . $this->name);
         }
         $this->setUniqueId($uniqueId);
+
         $this->setFlashLookupFolder($directory->getDirectoryBlueprint()->get('form/flash_folder') ?? 'tmp://forms/[SESSIONID]');
         $this->form = $options['form'] ?? null;
+
+        if (Utils::isPositive($this->form['disabled'] ?? false)) {
+            $this->disable();
+        }
 
         $this->initialize();
     }
@@ -127,6 +133,17 @@ class FlexDirectoryForm implements FlexDirectoryFormInterface, JsonSerializable
         }
 
         return $this;
+    }
+
+    /**
+     * @param string $uniqueId
+     * @return void
+     */
+    public function setUniqueId(string $uniqueId): void
+    {
+        if ($uniqueId !== '') {
+            $this->uniqueid = $uniqueId;
+        }
     }
 
     /**
@@ -258,6 +275,7 @@ class FlexDirectoryForm implements FlexDirectoryFormInterface, JsonSerializable
                 'unique_id' => $this->getUniqueId(),
                 'form_name' => $this->getName(),
                 'folder' => $this->getFlashFolder(),
+                'id' => $this->getFlashId(),
                 'directory' => $this->getDirectory()
             ];
 
@@ -318,11 +336,11 @@ class FlexDirectoryForm implements FlexDirectoryFormInterface, JsonSerializable
     }
 
     /**
-     * @param string $field
-     * @param string $filename
+     * @param string|null $field
+     * @param string|null $filename
      * @return Route|null
      */
-    public function getFileDeleteAjaxRoute($field, $filename): ?Route
+    public function getFileDeleteAjaxRoute($field = null, $filename = null): ?Route
     {
         return null;
     }
@@ -341,6 +359,7 @@ class FlexDirectoryForm implements FlexDirectoryFormInterface, JsonSerializable
      * @param string $name
      * @return mixed|null
      */
+    #[\ReturnTypeWillChange]
     public function __get($name)
     {
         $method = "get{$name}";
@@ -358,6 +377,7 @@ class FlexDirectoryForm implements FlexDirectoryFormInterface, JsonSerializable
      * @param mixed $value
      * @return void
      */
+    #[\ReturnTypeWillChange]
     public function __set($name, $value)
     {
         $method = "set{$name}";
@@ -370,6 +390,7 @@ class FlexDirectoryForm implements FlexDirectoryFormInterface, JsonSerializable
      * @param string $name
      * @return bool
      */
+    #[\ReturnTypeWillChange]
     public function __isset($name)
     {
         $method = "get{$name}";
@@ -386,6 +407,7 @@ class FlexDirectoryForm implements FlexDirectoryFormInterface, JsonSerializable
      * @param string $name
      * @return void
      */
+    #[\ReturnTypeWillChange]
     public function __unset($name)
     {
     }
@@ -453,7 +475,9 @@ class FlexDirectoryForm implements FlexDirectoryFormInterface, JsonSerializable
     protected function doSerialize(): array
     {
         return $this->doTraitSerialize() + [
+                'form' => $this->form,
                 'directory' => $this->directory,
+                'flexName' => $this->flexName
             ];
     }
 
@@ -465,13 +489,16 @@ class FlexDirectoryForm implements FlexDirectoryFormInterface, JsonSerializable
     {
         $this->doTraitUnserialize($data);
 
+        $this->form = $data['form'];
         $this->directory = $data['directory'];
+        $this->flexName = $data['flexName'];
     }
 
     /**
      * Filter validated data.
      *
      * @param ArrayAccess|Data|null $data
+     * @phpstan-param ArrayAccess<string,mixed>|Data|null $data
      */
     protected function filterData($data = null): void
     {

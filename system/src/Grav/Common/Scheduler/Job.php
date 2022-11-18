@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Scheduler
  * @author     Originally based on peppeocchi/php-cron-scheduler modified for Grav integration
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -271,7 +271,7 @@ class Job
         if ($whenOverlapping) {
             $this->whenOverlapping = $whenOverlapping;
         } else {
-            $this->whenOverlapping = function () {
+            $this->whenOverlapping = static function () {
                 return false;
             };
         }
@@ -390,7 +390,9 @@ class Job
         if (count($this->outputTo) > 0) {
             foreach ($this->outputTo as $file) {
                 $output_mode = $this->outputMode === 'append' ? FILE_APPEND | LOCK_EX : LOCK_EX;
-                file_put_contents($file, $this->output, $output_mode);
+                $timestamp = (new DateTime('now'))->format('c');
+                $output = $timestamp . "\n" . str_pad('', strlen($timestamp), '>') . "\n" . $this->output;
+                file_put_contents($file, $output, $output_mode);
             }
         }
 

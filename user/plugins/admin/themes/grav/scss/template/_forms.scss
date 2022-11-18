@@ -97,10 +97,19 @@ form {
             &.copy-to-clipboard {
                 cursor: pointer;
             }
+
+            &[data-regenerate] {
+                cursor: pointer;
+            }
         }
+
         input {
             height: 35px;
             display: table-cell;
+
+            &[name="data[folder]"] {
+                transition: background-color .5s ease;
+            }
         }
         .form-input-prepend {
             border-radius: 4px 0 0 4px;
@@ -153,6 +162,14 @@ form {
 
         [data-hint] {
             display: inline;
+        }
+
+        .hint-icon {
+          opacity: 0.7;
+          transition: 0.5s opacity;
+        }
+        &:hover .hint-icon {
+          opacity: 1.0;
         }
 
         &.inline {
@@ -475,7 +492,6 @@ form {
             position: relative;
             padding: 0 0 0 2rem;
             margin-right: 15px;
-
         }
         label:before {
             content:"";
@@ -679,6 +695,8 @@ textarea.frontmatter {
 
             &.collection-collapsed {
                 height: 70px;
+                overflow: hidden;
+
                 @include transform(translateZ(0));
 
                 @include breakpoint(mobile-only) {
@@ -730,6 +748,22 @@ textarea.frontmatter {
 
     [data-collection-nosort] .collection-sort {
         display: none;
+    }
+
+    .list-confirm-deletion {
+        cursor: pointer;
+        display: flex;
+        position: absolute !important;
+        z-index: 10010;
+        padding: .5rem;
+        top: 13px;
+        right: 20px;
+
+        > i, span {
+            text-align: center;
+            display: inline-flex;
+            align-items: center;
+        }
     }
 }
 
@@ -891,6 +925,14 @@ textarea.frontmatter {
 [data-grav-field="cron"] {
     display: flex;
     align-items: center;
+}
+
+.cron-selector {
+    input {
+        font-family: $monospace !important;
+        font-weight: bold !important;
+    }
+
 }
 
 .cron-install {

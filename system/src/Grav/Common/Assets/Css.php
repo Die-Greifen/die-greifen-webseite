@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Assets
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -22,7 +22,7 @@ class Css extends BaseAsset
      * @param array $elements
      * @param string|null $key
      */
-    public function __construct(array $elements = [], $key = null)
+    public function __construct(array $elements = [], ?string $key = null)
     {
         $base_options = [
             'asset_type' => 'css',
@@ -47,6 +47,6 @@ class Css extends BaseAsset
             return "<style>\n" . trim($buffer) . "\n</style>\n";
         }
 
-        return '<link href="' . trim($this->asset) . $this->renderQueryString() . '"' . $this->renderAttributes() . ">\n";
+        return '<link href="' . trim($this->asset) . $this->renderQueryString() . '"' . $this->renderAttributes() . $this->integrityHash($this->asset) . ">\n";
     }
 }

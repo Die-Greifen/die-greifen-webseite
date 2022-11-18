@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -105,7 +105,7 @@ class Taxonomy
             }
         } elseif (is_string($value)) {
             if (!empty($key)) {
-                $taxonomy = $taxonomy . $key;
+                $taxonomy .= $key;
             }
             $this->taxonomy_map[$taxonomy][(string) $value][$page->path()] = ['slug' => $page->slug()];
         }

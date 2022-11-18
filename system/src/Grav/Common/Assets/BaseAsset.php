@@ -3,17 +3,19 @@
 /**
  * @package    Grav\Common\Assets
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
 namespace Grav\Common\Assets;
 
 use Grav\Common\Assets\Traits\AssetUtilsTrait;
+use Grav\Common\Config\Config;
 use Grav\Common\Grav;
 use Grav\Common\Uri;
 use Grav\Common\Utils;
 use Grav\Framework\Object\PropertyObject;
+use RocketTheme\Toolbox\File\File;
 use SplFileInfo;
 
 /**
@@ -24,8 +26,9 @@ abstract class BaseAsset extends PropertyObject
 {
     use AssetUtilsTrait;
 
-    protected const CSS_ASSET = true;
-    protected const JS_ASSET = false;
+    protected const CSS_ASSET = 1;
+    protected const JS_ASSET = 2;
+    protected const JS_MODULE_ASSET = 3;
 
     /** @var string|false */
     protected $asset;
@@ -67,7 +70,7 @@ abstract class BaseAsset extends PropertyObject
      * @param array $elements
      * @param string|null $key
      */
-    public function __construct(array $elements = [], $key = null)
+    public function __construct(array $elements = [], ?string $key = null)
     {
         $base_config = [
             'group' => 'head',
@@ -90,6 +93,10 @@ abstract class BaseAsset extends PropertyObject
      */
     public function init($asset, $options)
     {
+        if (!$asset) {
+            return false;
+        }
+
         $config = Grav::instance()['config'];
         $uri = Grav::instance()['uri'];
 
@@ -124,7 +131,7 @@ abstract class BaseAsset extends PropertyObject
                 if ($locator->isStream($asset)) {
                     $path = $locator->findResource($asset, true);
                 } else {
-                    $path = GRAV_ROOT . $asset;
+                    $path = GRAV_WEBROOT . $asset;
                 }
 
                 // If local file is missing return
@@ -172,6 +179,35 @@ abstract class BaseAsset extends PropertyObject
         return $this;
     }
 
+    /**
+     * Receive asset location and return the SRI integrity hash
+     *
+     * @param string $input
+     * @return string
+     */
+    public static function integrityHash($input)
+    {
+        $grav = Grav::instance();
+        $uri = $grav['uri'];
+
+        $assetsConfig = $grav['config']->get('system.assets');
+
+        if (!self::isRemoteLink($input) && !empty($assetsConfig['enable_asset_sri']) && $assetsConfig['enable_asset_sri']) {
+            $input = preg_replace('#^' . $uri->rootUrl() . '#', '', $input);
+            $asset = File::instance(GRAV_WEBROOT . $input);
+
+            if ($asset->exists()) {
+                $dataToHash = $asset->content();
+                $hash = hash('sha256', $dataToHash, true);
+                $hash_base64 = base64_encode($hash);
+
+                return ' integrity="sha256-' . $hash_base64 . '"';
+            }
+        }
+
+        return '';
+    }
+
 
     /**
      *
@@ -183,7 +219,7 @@ abstract class BaseAsset extends PropertyObject
      */
 //    protected function getLastModificationTime($asset)
 //    {
-//        $file = GRAV_ROOT . $asset;
+//        $file = GRAV_WEBROOT . $asset;
 //        if (Grav::instance()['locator']->isStream($asset)) {
 //            $file = $this->buildLocalLink($asset, true);
 //        }
@@ -202,7 +238,7 @@ abstract class BaseAsset extends PropertyObject
     protected function buildLocalLink($asset)
     {
         if ($asset) {
-            return $this->base_url . ltrim(Utils::replaceFirstOccurrence(GRAV_ROOT, '', $asset), '/');
+            return $this->base_url . ltrim(Utils::replaceFirstOccurrence(GRAV_WEBROOT, '', $asset), '/');
         }
         return false;
     }
@@ -213,6 +249,7 @@ abstract class BaseAsset extends PropertyObject
      *
      * @return array
      */
+    #[\ReturnTypeWillChange]
     public function jsonSerialize()
     {
         return ['type' => $this->getType(), 'elements' => $this->getElements()];
@@ -228,6 +265,19 @@ abstract class BaseAsset extends PropertyObject
      */
     protected function cssRewrite($file, $dir, $local)
     {
-        return;
+        return '';
+    }
+
+    /**
+     * Finds relative JS urls() and rewrites the URL with an absolute one
+     *
+     * @param string $file the css source file
+     * @param string $dir local relative path to the css file
+     * @param bool $local is this a local or remote asset
+     * @return string
+     */
+    protected function jsRewrite($file, $dir, $local)
+    {
+        return '';
     }
 }

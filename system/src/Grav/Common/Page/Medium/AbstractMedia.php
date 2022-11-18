@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Page
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -90,6 +90,7 @@ abstract class AbstractMedia implements ExportInterface, MediaCollectionInterfac
      * @param string $filename
      * @return mixed
      */
+    #[\ReturnTypeWillChange]
     public function __invoke($filename)
     {
         return $this->offsetGet($filename);
@@ -196,6 +197,17 @@ abstract class AbstractMedia implements ExportInterface, MediaCollectionInterfac
             default:
                 $this->files[$name] = $file;
         }
+    }
+
+    /**
+     * @param string $name
+     * @return void
+     */
+    public function hide($name)
+    {
+        $this->offsetUnset($name);
+
+        unset($this->images[$name], $this->videos[$name], $this->audios[$name], $this->files[$name]);
     }
 
     /**

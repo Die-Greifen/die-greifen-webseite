@@ -22,10 +22,12 @@ use Grav\Common\Page\Medium\Medium;
 use Grav\Common\Page\Page;
 use Grav\Common\Page\Pages;
 use Grav\Common\Page\Collection;
+use Grav\Common\Plugins;
 use Grav\Common\Security;
 use Grav\Common\User\Interfaces\UserCollectionInterface;
-use Grav\Common\User\User;
+use Grav\Common\User\Interfaces\UserInterface;
 use Grav\Common\Utils;
+use Grav\Framework\Flex\Flex;
 use Grav\Framework\Psr7\Response;
 use Grav\Framework\RequestHandler\Exception\RequestException;
 use Grav\Plugin\Login\TwoFactorAuth\TwoFactorAuth;
@@ -34,9 +36,9 @@ use PicoFeed\Parser\MalformedXmlException;
 use Psr\Http\Message\ResponseInterface;
 use RocketTheme\Toolbox\Event\Event;
 use RocketTheme\Toolbox\File\File;
+use RocketTheme\Toolbox\File\YamlFile;
 use RocketTheme\Toolbox\ResourceLocator\UniformResourceLocator;
 use Twig\Loader\FilesystemLoader;
-
 
 /**
  * Class AdminController
@@ -51,10 +53,12 @@ class AdminController extends AdminBaseController
      * @param string|null $task
      * @param string|null $route
      * @param array|null $post
+     * @return void
      */
     public function initialize(Grav $grav = null, $view = null, $task = null, $route = null, $post = null)
     {
         $this->grav = $grav;
+        $this->admin = $this->grav['admin'];
         $this->view = $view;
         $this->task = $task ?: 'display';
         if (isset($post['data'])) {
@@ -66,7 +70,6 @@ class AdminController extends AdminBaseController
         }
         $this->post  = $this->getPost($post);
         $this->route = $route;
-        $this->admin = $this->grav['admin'];
 
         $this->grav->fireEvent('onAdminControllerInit', new Event(['controller' => &$this]));
     }
@@ -76,10 +79,13 @@ class AdminController extends AdminBaseController
     /**
      * Keep alive
      *
+     * Route: POST /task:keepAlive (AJAX call)
+     *
      * @return void
      */
     protected function taskKeepAlive(): void
     {
+        // This task is available for all admin users.
         $response = new Response(200);
 
         $this->close($response);
@@ -88,11 +94,18 @@ class AdminController extends AdminBaseController
     /**
      * Clear the cache.
      *
+     * Route: GET /cache.json/task:clearCache (AJAX call)
+     *
      * @return bool True if the action was performed.
      */
     protected function taskClearCache()
     {
-        if (!$this->authorizeTask('clear cache', ['admin.cache', 'admin.super', 'admin.maintenance'])) {
+        if (!$this->authorizeTask('clear cache', ['admin.cache', 'admin.maintenance', 'admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
             return false;
         }
 
@@ -132,6 +145,10 @@ class AdminController extends AdminBaseController
     /**
      * Handles form and saves the input data if its valid.
      *
+     * Route: POST /pages?task:save
+     * Route: POST /user?task:save
+     * Route: POST /*?task:save
+     *
      * @return bool True if the action was performed.
      */
     public function taskSave()
@@ -144,23 +161,32 @@ class AdminController extends AdminBaseController
 
         switch ($this->view) {
             case 'pages':
-                return $this->taskSavePage();
+                // Not used if Flex-Objects plugin handles pages.
+                return $this->savePage();
             case 'user':
-                return $this->taskSaveUser();
+                // Not used if Flex-Objects plugin handles users.
+                return $this->saveUser();
             default:
-                return $this->taskSaveDefault();
+                if ($this->saveDefault()) {
+                    $route = $this->grav['uri']::getCurrentRoute();
+                    $this->setRedirect($route->withGravParam('task', null)->toString(), 302);
+                    $this->redirect();
+                }
+
+                return false;
         }
     }
 
     /**
      * @return bool
      */
-    protected function taskSaveDefault()
+    protected function saveDefault()
     {
-        // Handle standard data types.
-        $obj = $this->prepareData((array)$this->data);
-
         try {
+            // Handle standard data types.
+            $type = $this->getDataType();
+
+            $obj = $this->admin->getConfigurationData($type, $this->data);
             $obj->validate();
         } catch (\Exception $e) {
             /** @var Debugger $debugger */
@@ -184,63 +210,57 @@ class AdminController extends AdminBaseController
             $this->grav->fireEvent('onAdminAfterSave', new Event(['object' => $obj]));
         }
 
+        Cache::clearCache('invalidate');
+
         // Force configuration reload.
         /** @var Config $config */
         $config = $this->grav['config'];
         $config->reload();
 
-        Cache::clearCache('invalidate');
+        if ($this->view === 'config') {
+            $this->setRedirect($this->admin->getAdminRoute("/{$this->view}/{$this->route}")->toString());
+        }
 
         return true;
     }
 
-     // LOGIN & USER TASKS
-
-    /**
-     * Handle login.
-     *
-     * @return bool True if the action was performed.
-     */
-    protected function taskLogin()
-    {
-        $this->admin->authenticate($this->data, $this->post);
-
-        return true;
-    }
-
-    /**
-     * @return bool True if the action was performed.
-     */
-    protected function taskTwofa()
-    {
-        $this->admin->twoFa($this->data, $this->post);
-
-        return true;
-    }
+    // USER TASKS
 
     /**
      * Handle logout.
+     *
+     * Route: GET /task:logout
+     * Route: POST ?task=logout
      *
      * @return bool True if the action was performed.
      */
     protected function taskLogout()
     {
-        $this->admin->logout($this->data, $this->post);
+        if (!$this->authorizeTask('logout', ['admin.login', 'admin.super'])) {
+            return false;
+        }
 
-        return true;
+        $this->admin->logout($this->data, $this->post);
     }
 
     /**
+     * Route: POST /ajax.json/task:regenerate2FASecret (AJAX call)
+     *
      * @return bool
      */
     public function taskRegenerate2FASecret()
     {
-        if (!$this->authorizeTask('regenerate 2FA Secret', ['admin.login'])) {
+        if (!$this->authorizeTask('regenerate 2FA Secret', ['admin.login', 'admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
             return false;
         }
 
         try {
-            /** @var User $user */
+            /** @var UserInterface $user */
             $user = $this->grav['user'];
 
             /** @var TwoFactorAuth $twoFa */
@@ -270,175 +290,9 @@ class AdminController extends AdminBaseController
             $debugger = $this->grav['debugger'];
             $debugger->addException($e);
 
-            $this->admin->json_response = ['status' => 'error', 'message' => $e->getMessage()];
+            $this->admin->json_response = ['status' => 'error', 'message' => htmlspecialchars($e->getMessage(), ENT_QUOTES | ENT_HTML5, 'UTF-8')];
             return false;
         }
-
-        return true;
-    }
-
-    /**
-     * Handle the reset password action.
-     *
-     * @return bool True if the action was performed.
-     */
-    public function taskReset()
-    {
-        $data = $this->data;
-
-        if (isset($data['password'])) {
-            /** @var UserCollectionInterface $users */
-            $users = $this->grav['accounts'];
-
-            $username = isset($data['username']) ? strip_tags(strtolower($data['username'])) : null;
-            $user     = $username ? $users->load($username) : null;
-            $password = $data['password'] ?? null;
-            $token    = $data['token'] ?? null;
-
-            if ($user && $user->exists() && !empty($user->get('reset'))) {
-                list($good_token, $expire) = explode('::', $user->get('reset'));
-
-                if ($good_token === $token) {
-                    if (time() > $expire) {
-                        $this->admin->setMessage($this->admin::translate('PLUGIN_ADMIN.RESET_LINK_EXPIRED'), 'error');
-                        $this->setRedirect('/forgot');
-
-                        return true;
-                    }
-
-                    $user->undef('hashed_password');
-                    $user->undef('reset');
-                    $user->set('password',  $password);
-                    $user->save();
-
-                    $this->admin->setMessage($this->admin::translate('PLUGIN_ADMIN.RESET_PASSWORD_RESET'), 'info');
-                    $this->setRedirect('/');
-
-                    return true;
-                }
-            }
-
-            $this->admin->setMessage($this->admin::translate('PLUGIN_ADMIN.RESET_INVALID_LINK'), 'error');
-            $this->setRedirect('/forgot');
-
-            return true;
-
-        }
-
-        $user  = $this->grav['uri']->param('user');
-        $token = $this->grav['uri']->param('token');
-
-        if (empty($user) || empty($token)) {
-            $this->admin->setMessage($this->admin::translate('PLUGIN_ADMIN.RESET_INVALID_LINK'), 'error');
-            $this->setRedirect('/forgot');
-
-            return true;
-        }
-
-        $this->admin->setMessage($this->admin::translate('PLUGIN_ADMIN.RESET_NEW_PASSWORD'), 'info');
-
-        $this->admin->forgot = ['username' => $user, 'token' => $token];
-
-        return true;
-    }
-
-    /**
-     * Handle the email password recovery procedure.
-     *
-     * @return bool True if the action was performed.
-     */
-    protected function taskForgot()
-    {
-        $param_sep = $this->grav['config']->get('system.param_sep', ':');
-        $post      = $this->post;
-        $data      = $this->data;
-        $login     = $this->grav['login'];
-
-        /** @var UserCollectionInterface $users */
-        $users = $this->grav['accounts'];
-
-        $username = isset($data['username']) ? strip_tags(strtolower($data['username'])) : '';
-        $user     = !empty($username) ? $users->load($username) : null;
-
-        if (!isset($this->grav['Email'])) {
-            $this->admin->setMessage($this->admin::translate('PLUGIN_ADMIN.FORGOT_EMAIL_NOT_CONFIGURED'), 'error');
-            $this->setRedirect($post['redirect']);
-
-            return true;
-        }
-
-        if (!$user || !$user->exists()) {
-            $this->admin->setMessage($this->admin::translate('PLUGIN_ADMIN.FORGOT_INSTRUCTIONS_SENT_VIA_EMAIL'),
-                'info');
-            $this->setRedirect($post['redirect']);
-
-            return true;
-        }
-
-        if (empty($user->email)) {
-            $this->admin->setMessage($this->admin::translate('PLUGIN_ADMIN.FORGOT_INSTRUCTIONS_SENT_VIA_EMAIL'),
-                'info');
-            $this->setRedirect($post['redirect']);
-
-            return true;
-        }
-
-        $count = $this->grav['config']->get('plugins.login.max_pw_resets_count', 0);
-        $interval =$this->grav['config']->get('plugins.login.max_pw_resets_interval', 2);
-
-        if ($login->isUserRateLimited($user, 'pw_resets', $count, $interval)) {
-            $this->admin->setMessage($this->admin::translate(['PLUGIN_LOGIN.FORGOT_CANNOT_RESET_IT_IS_BLOCKED', $user->email, $interval]), 'error');
-            $this->setRedirect($post['redirect']);
-
-            return true;
-        }
-
-        $token  = md5(uniqid(mt_rand(), true));
-        $expire = time() + 604800; // next week
-
-        $user->set('reset', $token . '::' . $expire);
-        $user->save();
-
-        $author     = $this->grav['config']->get('site.author.name', '');
-        $fullname   = $user->fullname ?: $username;
-        $reset_link = rtrim($this->grav['uri']->rootUrl(true), '/') . '/' . trim($this->admin->base,
-                '/') . '/reset/task' . $param_sep . 'reset/user' . $param_sep . $username . '/token' . $param_sep . $token . '/admin-nonce' . $param_sep . Utils::getNonce('admin-form');
-
-        $sitename = $this->grav['config']->get('site.title', 'Website');
-        $from     = $this->grav['config']->get('plugins.email.from');
-
-        if (empty($from)) {
-            $this->admin->setMessage($this->admin::translate('PLUGIN_ADMIN.FORGOT_EMAIL_NOT_CONFIGURED'), 'error');
-            $this->setRedirect($post['redirect']);
-
-            return true;
-        }
-
-        $to = $user->email;
-
-        $subject = $this->admin::translate(['PLUGIN_ADMIN.FORGOT_EMAIL_SUBJECT', $sitename]);
-        $content = $this->admin::translate([
-            'PLUGIN_ADMIN.FORGOT_EMAIL_BODY',
-            $fullname,
-            $reset_link,
-            $author,
-            $sitename
-        ]);
-
-        $body = $this->grav['twig']->processTemplate('email/base.html.twig', ['content' => $content]);
-
-        $message = $this->grav['Email']->message($subject, $body, 'text/html')->setFrom($from)->setTo($to);
-
-        $sent = $this->grav['Email']->send($message);
-
-        if ($sent < 1) {
-            $this->admin->setMessage($this->admin::translate('PLUGIN_ADMIN.FORGOT_FAILED_TO_EMAIL'), 'error');
-        } else {
-            $this->admin->setMessage($this->admin::translate('PLUGIN_ADMIN.FORGOT_INSTRUCTIONS_SENT_VIA_EMAIL'),
-                'info');
-        }
-
-        $this->setRedirect('/');
 
         return true;
     }
@@ -448,9 +302,11 @@ class AdminController extends AdminBaseController
      *
      * Called by more general save task.
      *
+     * @note Not used if Flex-Objects plugin handles users.
+     *
      * @return bool
      */
-    protected function taskSaveUser()
+    protected function saveUser()
     {
         /** @var UserCollectionInterface $users */
         $users = $this->grav['accounts'];
@@ -513,12 +369,19 @@ class AdminController extends AdminBaseController
     /**
      * Get Notifications
      *
-     * @return void
+     * Route: POST /task:getNotifications (AJAX call)
+     *
+     * @return bool
      */
-    protected function taskGetNotifications(): void
+    protected function taskGetNotifications()
     {
         if (!$this->authorizeTask('dashboard', ['admin.login', 'admin.super'])) {
-            $this->sendJsonResponse(['status' => 'error', 'message' => 'unauthorized']);
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
+            return false;
         }
 
         // do we need to force a reload
@@ -546,7 +409,7 @@ class AdminController extends AdminBaseController
             $debugger = $this->grav['debugger'];
             $debugger->addException($e);
 
-            $json_response = ['status' => 'error', 'message' => $e->getMessage()];
+            $json_response = ['status' => 'error', 'message' => htmlspecialchars($e->getMessage(), ENT_QUOTES | ENT_HTML5, 'UTF-8')];
         }
 
         $this->sendJsonResponse($json_response);
@@ -556,11 +419,18 @@ class AdminController extends AdminBaseController
     /**
      * Hide notifications.
      *
+     * Route: POST /notifications.json/task:hideNotification/notification_id:ID (AJAX call)
+     *
      * @return bool True if the action was performed.
      */
     protected function taskHideNotification()
     {
-        if (!$this->authorizeTask('hide notification', ['admin.login'])) {
+        if (!$this->authorizeTask('hide notification', ['admin.login', 'admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
             return false;
         }
 
@@ -592,12 +462,19 @@ class AdminController extends AdminBaseController
     /**
      * Get Newsfeeds
      *
-     * @return void
+     * Route: POST /ajax.json/task:getNewsFeed (AJAX call)
+     *
+     * @return bool
      */
-    protected function taskGetNewsFeed(): void
+    protected function taskGetNewsFeed()
     {
         if (!$this->authorizeTask('dashboard', ['admin.login', 'admin.super'])) {
-            $this->sendJsonResponse(['status' => 'error', 'message' => 'unauthorized']);
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
+            return false;
         }
 
         $refresh = $this->data['refresh'] === 'true' ? true : false;
@@ -615,7 +492,7 @@ class AdminController extends AdminBaseController
             $debugger = $this->grav['debugger'];
             $debugger->addException($e);
 
-            $json_response = ['status' => 'error', 'message' => $e->getMessage()];
+            $json_response = ['status' => 'error', 'message' => htmlspecialchars($e->getMessage(), ENT_QUOTES | ENT_HTML5, 'UTF-8')];
         }
 
         $this->sendJsonResponse($json_response);
@@ -626,20 +503,27 @@ class AdminController extends AdminBaseController
     /**
      * Handle the backup action
      *
+     * Route: GET /backup.json/id:BACKUP_ID/task:backup (AJAX call)
+     *
      * @return bool True if the action was performed.
      */
     protected function taskBackup()
     {
-        $param_sep = $this->grav['config']->get('system.param_sep', ':');
         if (!$this->authorizeTask('backup', ['admin.maintenance', 'admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
             return false;
         }
 
+        $param_sep = $this->grav['config']->get('system.param_sep', ':');
         $download = $this->grav['uri']->param('download');
 
         try {
             if ($download) {
-                $filename = basename(base64_decode(urldecode($download)));
+                $filename = Utils::basename(base64_decode(urldecode($download)));
                 $file = $this->grav['locator']->findResource("backup://{$filename}", true);
                 if (!$file || !Utils::endsWith($filename, '.zip', false)) {
                     header('HTTP/1.1 401 Unauthorized');
@@ -658,7 +542,7 @@ class AdminController extends AdminBaseController
 
             $this->admin->json_response = [
                 'status' => 'error',
-                'message' => $this->admin::translate('PLUGIN_ADMIN.AN_ERROR_OCCURRED') . '. ' . $e->getMessage()
+                'message' => $this->admin::translate('PLUGIN_ADMIN.AN_ERROR_OCCURRED') . '. ' . htmlspecialchars($e->getMessage(), ENT_QUOTES | ENT_HTML5, 'UTF-8')
             ];
 
             return true;
@@ -684,18 +568,25 @@ class AdminController extends AdminBaseController
     /**
      * Handle delete backup action
      *
+     * Route: GET /backup.json/backup:BACKUP_FILE/task:backupDelete (AJAX call)
+     *
      * @return bool
      */
     protected function taskBackupDelete()
     {
         if (!$this->authorizeTask('backup', ['admin.maintenance', 'admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
             return false;
         }
 
         $backup = $this->grav['uri']->param('backup', null);
 
         if (null !== $backup) {
-            $filename = basename(base64_decode(urldecode($backup)));
+            $filename = Utils::basename(base64_decode(urldecode($backup)));
             $file = $this->grav['locator']->findResource("backup://{$filename}", true);
 
             if ($file && Utils::endsWith($filename, '.zip', false)) {
@@ -726,26 +617,27 @@ class AdminController extends AdminBaseController
     /**
      * Enable a plugin.
      *
-     * Route: /plugins
+     * Route: GET /plugins/SLUG/task:enable
      *
      * @return bool True if the action was performed.
      */
     public function taskEnable()
     {
-        if (!$this->authorizeTask('enable plugin', ['admin.plugins', 'admin.super'])) {
-            return false;
-        }
-
         if ($this->view !== 'plugins') {
             return false;
         }
 
-        // Filter value and save it.
-        $this->post = ['enabled' => true];
-        $obj        = $this->prepareData($this->post);
-        $obj->save();
+        if (!$this->authorizeTask('enable plugin', ['admin.plugins', 'admin.super'])) {
+            return false;
+        }
+
+        $type = $this->getDataType();
+        $this->updatePluginState($type, ['enabled' => true]);
 
         $this->post = ['_redirect' => 'plugins'];
+        if ($this->grav['uri']->param('redirect')) {
+            $this->post = ['_redirect' => 'plugins/' . $this->route];
+        }
         $this->admin->setMessage($this->admin::translate('PLUGIN_ADMIN.SUCCESSFULLY_ENABLED_PLUGIN'), 'info');
 
         Cache::clearCache('invalidate');
@@ -756,24 +648,22 @@ class AdminController extends AdminBaseController
     /**
      * Disable a plugin.
      *
-     * Route: /plugins
+     * Route: GET /plugins/SLUG/task:disable
      *
      * @return bool True if the action was performed.
      */
     public function taskDisable()
     {
-        if (!$this->authorizeTask('disable plugin', ['admin.plugins', 'admin.super'])) {
-            return false;
-        }
-
         if ($this->view !== 'plugins') {
             return false;
         }
 
-        // Filter value and save it.
-        $this->post = ['enabled' => false];
-        $obj        = $this->prepareData($this->post);
-        $obj->save();
+        if (!$this->authorizeTask('disable plugin', ['admin.plugins', 'admin.super'])) {
+            return false;
+        }
+
+        $type = $this->getDataType();
+        $this->updatePluginState($type, ['enabled' => false]);
 
         $this->post = ['_redirect' => 'plugins'];
         $this->admin->setMessage($this->admin::translate('PLUGIN_ADMIN.SUCCESSFULLY_DISABLED_PLUGIN'), 'info');
@@ -784,30 +674,54 @@ class AdminController extends AdminBaseController
     }
 
     /**
+     * @param string $type
+     * @param array $value
+     * @return void
+     */
+    protected function updatePluginState(string $type, array $value): void
+    {
+        $obj = Plugins::get(preg_replace('|plugins/|', '', $type));
+        if (null === $obj) {
+            throw new \RuntimeException("Plugin '{$type}' doesn't exist!");
+        }
+
+        /** @var UniformResourceLocator $locator */
+        $locator = $this->grav['locator'];
+
+        // Configuration file will be saved to the existing config stream.
+        $filename = $locator->findResource('config://') . "/{$type}.yaml";
+
+        $file = YamlFile::instance($filename);
+        $contents = $value + $file->content();
+
+        $file->save($contents);
+    }
+
+    /**
      * Set the default theme.
      *
-     * Route: /themes
+     * Route: GET /themes/SLUG/task:activate
      *
      * @return bool True if the action was performed.
      */
     public function taskActivate()
     {
-        if (!$this->authorizeTask('activate theme', ['admin.themes', 'admin.super'])) {
-            return false;
-        }
-
         if ($this->view !== 'themes') {
             return false;
         }
 
-        $this->post = ['_redirect' => 'themes'];
+        if (!$this->authorizeTask('activate theme', ['admin.themes', 'admin.super'])) {
+            return false;
+        }
+
+        $this->post = ['_redirect' => 'themes' ];
 
         // Make sure theme exists (throws exception)
         $name = $this->route;
         $this->grav['themes']->get($name);
 
         // Store system configuration.
-        $system = $this->admin->data('config/system');
+        $system = $this->admin->getConfigurationData('config/system');
         $system->set('pages.theme', $name);
         $system->save();
 
@@ -822,6 +736,8 @@ class AdminController extends AdminBaseController
 
         Cache::clearCache('invalidate');
 
+        $this->post = ['_redirect' => 'themes/' . $name ];
+
         return true;
     }
 
@@ -830,11 +746,18 @@ class AdminController extends AdminBaseController
     /**
      * Handles updating Grav
      *
+     * Route: GET /update.json/task:updategrav (AJAX call)
+     *
      * @return bool False if user has no permissions.
      */
     public function taskUpdategrav()
     {
         if (!$this->authorizeTask('install grav', ['admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
             return false;
         }
 
@@ -859,23 +782,21 @@ class AdminController extends AdminBaseController
         }
 
         $this->sendJsonResponse($json_response);
-
-        return true;
     }
 
     /**
      * Handles uninstalling plugins and themes
      *
-     * Route: /plugins
-     * Route: /themes
-     *
-     * @deprecated
-     *
      * @return bool True if the action was performed
+     * @deprecated Not being used anymore
      */
     public function taskUninstall()
     {
-        $type = $this->view === 'plugins' ? 'plugins' : 'themes';
+        $type = $this->view;
+        if ($type !== 'plugins' && $type !== 'themes') {
+            return false;
+        }
+
         if (!$this->authorizeTask('uninstall ' . $type, ['admin.' . $type, 'admin.super'])) {
             return false;
         }
@@ -898,11 +819,18 @@ class AdminController extends AdminBaseController
     /**
      * Toggle the gpm.releases setting
      *
+     * Route: POST /ajax.json/task:gpmRelease (AJAX call)
+     *
      * @return bool
      */
     protected function taskGpmRelease()
     {
-        if (!$this->authorizeTask('configuration', ['admin.configuration.system', 'admin.super'])) {
+        if (!$this->authorizeTask('configuration', ['admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
             return false;
         }
 
@@ -941,11 +869,22 @@ class AdminController extends AdminBaseController
     /**
      * Get update status from GPM
      *
+     * Request: POST /update.json/task:getUpdates (AJAX call)
+     *
      * @return bool
      */
     protected function taskGetUpdates()
     {
-        if (!$this->authorizeTask('dashboard', ['admin.login', 'admin.super'])) {
+        if ($this->view !== 'update') {
+            return false;
+        }
+
+        if (!$this->authorizeTask('dashboard', ['admin.plugins', 'admin.themes', 'admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
             return false;
         }
 
@@ -1000,7 +939,7 @@ class AdminController extends AdminBaseController
             $debugger = $this->grav['debugger'];
             $debugger->addException($e);
 
-            $this->admin->json_response = ['status' => 'error', 'message' => $e->getMessage()];
+            $this->admin->json_response = ['status' => 'error', 'message' => htmlspecialchars($e->getMessage(), ENT_QUOTES | ENT_HTML5, 'UTF-8')];
 
             return false;
         }
@@ -1009,12 +948,29 @@ class AdminController extends AdminBaseController
     }
 
     /**
-     * Handle getting a new package dependencies needed to be installed
+     * Handle getting a new package dependencies needed to be installed.
+     *
+     * Route: /plugins.json/task:getPackagesDependencies (AJAX call)
+     * Route: /themes.json/task:getPackagesDependencies (AJAX call)
      *
      * @return bool
      */
     protected function taskGetPackagesDependencies()
     {
+        $type = $this->view;
+        if ($type !== 'plugins' && $type !== 'themes') {
+            return false;
+        }
+
+        if (!$this->authorizeTask('get package dependencies', ['admin.' . $type, 'admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
+            return false;
+        }
+
         $data     = $this->post;
         $packages = isset($data['packages']) ? explode(',', $data['packages']) : '';
         $packages = (array)$packages;
@@ -1027,7 +983,7 @@ class AdminController extends AdminBaseController
             $debugger = $this->grav['debugger'];
             $debugger->addException($e);
 
-            $this->admin->json_response = ['status' => 'error', 'message' => $e->getMessage()];
+            $this->admin->json_response = ['status' => 'error', 'message' => htmlspecialchars($e->getMessage(), ENT_QUOTES | ENT_HTML5, 'UTF-8')];
 
             return false;
         }
@@ -1038,17 +994,19 @@ class AdminController extends AdminBaseController
     }
 
     /**
+     * Route: /plugins.json/task:installDependenciesOfPackages (AJAX call)
+     * Route: /themes.json/task:installDependenciesOfPackages (AJAX call)
+     *
      * @return bool
      */
     protected function taskInstallDependenciesOfPackages()
     {
-        $data     = $this->post;
-        $packages = isset($data['packages']) ? explode(',', $data['packages']) : '';
-        $packages = (array)$packages;
+        $type = $this->view;
+        if ($type !== 'plugins' && $type !== 'themes') {
+            return false;
+        }
 
-        $type = $data['type'] ?? '';
-
-        if (!$this->authorizeTask('install ' . $type, ['admin.' . $type, 'admin.super'])) {
+        if (!$this->authorizeTask('install dependencies', ['admin.' . $type, 'admin.super'])) {
             $this->admin->json_response = [
                 'status'  => 'error',
                 'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
@@ -1057,6 +1015,10 @@ class AdminController extends AdminBaseController
             return false;
         }
 
+        $data = $this->post;
+        $packages = isset($data['packages']) ? explode(',', $data['packages']) : '';
+        $packages = (array)$packages;
+
         try {
             $dependencies = $this->admin->getDependenciesNeededToInstall($packages);
         } catch (\Exception $e) {
@@ -1064,12 +1026,12 @@ class AdminController extends AdminBaseController
             $debugger = $this->grav['debugger'];
             $debugger->addException($e);
 
-            $this->admin->json_response = ['status' => 'error', 'message' => $e->getMessage()];
+            $this->admin->json_response = ['status' => 'error', 'message' => htmlspecialchars($e->getMessage(), ENT_QUOTES | ENT_HTML5, 'UTF-8')];
 
             return false;
         }
 
-        $result = Gpm::install(array_keys($dependencies), ['theme' => $type === 'theme']);
+        $result = Gpm::install(array_keys($dependencies), ['theme' => $type === 'themes']);
 
         if ($result) {
             $this->admin->json_response = ['status' => 'success', 'message' => 'Dependencies installed successfully'];
@@ -1084,14 +1046,18 @@ class AdminController extends AdminBaseController
     }
 
     /**
+     * Route: /plugins.json/task:installPackage (AJAX call)
+     * Route: /themes.json/task:installPackage (AJAX call)
+     *
      * @param bool $reinstall
      * @return bool
      */
     protected function taskInstallPackage($reinstall = false)
     {
-        $data    = $this->post;
-        $package = $data['package'] ?? '';
-        $type    = $data['type'] ?? '';
+        $type = $this->view;
+        if ($type !== 'plugins' && $type !== 'themes') {
+            return false;
+        }
 
         if (!$this->authorizeTask('install ' . $type, ['admin.' . $type, 'admin.super'])) {
             $this->admin->json_response = [
@@ -1102,8 +1068,10 @@ class AdminController extends AdminBaseController
             return false;
         }
 
+        $data = $this->post;
+        $package = $data['package'] ?? '';
         try {
-            $result = Gpm::install($package, ['theme' => $type === 'theme']);
+            $result = Gpm::install($package, ['theme' => $type === 'themes']);
         } catch (\Exception $e) {
             /** @var Debugger $debugger */
             $debugger = $this->grav['debugger'];
@@ -1113,7 +1081,7 @@ class AdminController extends AdminBaseController
             $msg = Utils::contains($msg, '401 Unauthorized') ? "ERROR: License key for this resource is invalid." : $msg;
             $msg = Utils::contains($msg, '404 Not Found') ? "ERROR: Resource not found" : $msg;
 
-            $this->admin->json_response = ['status' => 'error', 'message' => $msg];
+            $this->admin->json_response = ['status' => 'error', 'message' => htmlspecialchars($msg, ENT_QUOTES | ENT_HTML5, 'UTF-8')];
 
             return false;
         }
@@ -1137,14 +1105,17 @@ class AdminController extends AdminBaseController
     /**
      * Handle removing a package
      *
-     * @return void
+     * Route: /plugins.json/task:removePackage (AJAX call)
+     * Route: /themes.json/task:removePackage (AJAX call)
+     *
+     * @return bool
      */
-    protected function taskRemovePackage(): void
+    protected function taskRemovePackage(): bool
     {
-        $data    = $this->post;
-        $package = $data['package'] ?? '';
-        $type    = $data['type'] ?? '';
-        $result = false;
+        $type = $this->view;
+        if ($type !== 'plugins' && $type !== 'themes') {
+            return false;
+        }
 
         if (!$this->authorizeTask('uninstall ' . $type, ['admin.' . $type, 'admin.super'])) {
             $json_response = [
@@ -1154,6 +1125,10 @@ class AdminController extends AdminBaseController
 
             $this->sendJsonResponse($json_response, 403);
         }
+
+        $data    = $this->post;
+        $package = $data['package'] ?? '';
+        $result = false;
 
         //check if there are packages that have this as a dependency. Abort and show which ones
         $dependent_packages = $this->admin->getPackagesThatDependOnPackage($package);
@@ -1180,7 +1155,7 @@ class AdminController extends AdminBaseController
             $debugger = $this->grav['debugger'];
             $debugger->addException($e);
 
-            $json_response = ['status' => 'error', 'message' => $e->getMessage()];
+            $json_response = ['status' => 'error', 'message' => htmlspecialchars($e->getMessage(), ENT_QUOTES | ENT_HTML5, 'UTF-8')];
 
             $this->sendJsonResponse($json_response, 200);
         }
@@ -1206,16 +1181,17 @@ class AdminController extends AdminBaseController
     /**
      * Handle reinstalling a package
      *
-     * @return void
+     * Route: /plugins.json/task:reinstallPackage (AJAX call)
+     * Route: /themes.json/task:reinstallPackage (AJAX call)
+     *
+     * @return bool
      */
     protected function taskReinstallPackage()
     {
-        $data = $this->post;
-
-        $slug            = $data['slug'] ?? '';
-        $type            = $data['type'] ?? '';
-        $package_name    = $data['package_name'] ?? '';
-        $current_version = $data['current_version'] ?? '';
+        $type = $this->view;
+        if ($type !== 'plugins' && $type !== 'themes') {
+            return false;
+        }
 
         if (!$this->authorizeTask('install ' . $type, ['admin.' . $type, 'admin.super'])) {
             $json_response = [
@@ -1225,6 +1201,11 @@ class AdminController extends AdminBaseController
 
             $this->sendJsonResponse($json_response, 403);
         }
+
+        $data = $this->post;
+        $slug            = $data['slug'] ?? '';
+        $package_name    = $data['package_name'] ?? '';
+        $current_version = $data['current_version'] ?? '';
 
         $url = "https://getgrav.org/download/{$type}s/$slug/$current_version";
 
@@ -1242,10 +1223,14 @@ class AdminController extends AdminBaseController
                 'message' => $this->admin::translate('PLUGIN_ADMIN.REINSTALLATION_FAILED')
             ];
         }
+
+        return true;
     }
 
     /**
      * Handle direct install.
+     *
+     * Request: POST /tools/direct-install?task=directInstall
      *
      * @return bool
      */
@@ -1312,11 +1297,19 @@ class AdminController extends AdminBaseController
     /**
      * Handles creating an empty page folder (without markdown file)
      *
+     * Route: /pages
+     *
+     * @note Not used if Flex-Objects plugin handles pages.
+     *
      * @return bool True if the action was performed.
      */
     public function taskSaveNewFolder()
     {
-        if (!$this->authorizeTask('save', $this->dataPermissions())) {
+        if ($this->view !== 'pages') {
+            return false;
+        }
+
+        if (!$this->authorizeTask('new folder', ['admin.pages', 'admin.pages.create', 'admin.super'])) {
             return false;
         }
 
@@ -1355,9 +1348,11 @@ class AdminController extends AdminBaseController
     }
 
     /**
+     * @note Not used if Flex-Objects plugin handles pages.
+     *
      * @return bool
      */
-    protected function taskSavePage()
+    protected function savePage()
     {
         $reorder = true;
 
@@ -1497,17 +1492,18 @@ class AdminController extends AdminBaseController
      *
      * Route: /pages
      *
+     * @note Not used if Flex-Objects plugin handles pages.
+     *
      * @return bool True if the action was performed.
      * @throws \RuntimeException
      */
     protected function taskCopy()
     {
-        if (!$this->authorizeTask('copy page', ['admin.pages', 'admin.super'])) {
+        if ($this->view !== 'pages') {
             return false;
         }
 
-        // Only applies to pages.
-        if ($this->view !== 'pages') {
+        if (!$this->authorizeTask('copy page', ['admin.pages', 'admin.pages.create', 'admin.super'])) {
             return false;
         }
 
@@ -1586,16 +1582,17 @@ class AdminController extends AdminBaseController
      *
      * Route: /pages
      *
+     * @note Not used if Flex-Objects plugin handles pages.
+     *
      * @return bool True if the action was performed.
      */
     protected function taskReorder()
     {
-        if (!$this->authorizeTask('reorder pages', ['admin.pages', 'admin.super'])) {
+        if ($this->view !== 'pages') {
             return false;
         }
 
-        // Only applies to pages.
-        if ($this->view !== 'pages') {
+        if (!$this->authorizeTask('reorder pages', ['admin.pages', 'admin.pages.update', 'admin.super'])) {
             return false;
         }
 
@@ -1609,17 +1606,18 @@ class AdminController extends AdminBaseController
      *
      * Route: /pages
      *
+     * @note Not used if Flex-Objects plugin handles pages.
+     *
      * @return bool True if the action was performed.
      * @throws \RuntimeException
      */
     protected function taskDelete()
     {
-        if (!$this->authorizeTask('delete page', ['admin.pages', 'admin.super'])) {
+        if ($this->view !== 'pages') {
             return false;
         }
 
-        // Only applies to pages.
-        if ($this->view !== 'pages') {
+        if (!$this->authorizeTask('delete page', ['admin.pages', 'admin.pages.delete', 'admin.super'])) {
             return false;
         }
 
@@ -1655,11 +1653,17 @@ class AdminController extends AdminBaseController
      *
      * Route: /pages
      *
+     * @note Not used if Flex-Objects plugin handles pages.
+     *
      * @return bool
      */
     protected function taskSwitchlanguage()
     {
-        if (!$this->authorizeTask('switch language', ['admin.pages', 'admin.super'])) {
+        if ($this->view !== 'pages') {
+            return false;
+        }
+
+        if (!$this->authorizeTask('switch language', ['admin.pages', 'admin.pages.list', 'admin.super'])) {
             return false;
         }
 
@@ -1688,11 +1692,19 @@ class AdminController extends AdminBaseController
     /**
      * Save the current page in a different language. Automatically switches to that language.
      *
+     * Route: /pages
+     *
+     * @note Not used if Flex-Objects plugin handles pages.
+     *
      * @return bool True if the action was performed.
      */
     protected function taskSaveas()
     {
-        if (!$this->authorizeTask('save', $this->dataPermissions())) {
+        if ($this->view !== 'pages') {
+            return false;
+        }
+
+        if (!$this->authorizeTask('save as', ['admin.pages', 'admin.pages.create', 'admin.super'])) {
             return false;
         }
 
@@ -1748,6 +1760,8 @@ class AdminController extends AdminBaseController
     /**
      * Continue to the new page.
      *
+     * @note Not used if Flex-Objects plugin handles pages, users and user groups.
+     *
      * @return bool True if the action was performed.
      */
     public function taskContinue()
@@ -1757,12 +1771,6 @@ class AdminController extends AdminBaseController
         if ($this->view === 'users') {
             $username = strip_tags(strtolower($data['username']));
             $this->setRedirect("{$this->view}/{$username}");
-
-            return true;
-        }
-
-        if ($this->view === 'groups') {
-            $this->setRedirect("{$this->view}/{$data['groupname']}");
 
             return true;
         }
@@ -1849,27 +1857,36 @@ class AdminController extends AdminBaseController
     }
 
     /**
+     * Route: /ajax.json
+     *
+     * @note Not used if Flex-Objects plugin handles pages.
+     *
      * @return bool
      */
     protected function taskGetChildTypes()
     {
-        if (!$this->authorizeTask('get childtypes', ['admin.pages', 'admin.super'])) {
+        if ($this->view !== 'ajax') {
+            return false;
+        }
+
+        if (!$this->authorizeTask('get childtypes', ['admin.pages', 'admin.pages.list', 'admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
             return false;
         }
 
         $data = $this->post;
 
-        $rawroute = $data['rawroute'] ?? null;
-
-        if ($rawroute) {
-            $pages = $this->admin::enablePages();
-
-            /** @var PageInterface $page */
-            $page = $pages->find($rawroute);
-
-            if ($page) {
+        $route = $data['rawroute'] ?? null;
+        if ($route) {
+            /** @var Flex $flex */
+            $flex = $this->grav['flex'];
+            $page = $flex->getObject(trim($route, '/'), 'pages');
+            if ($page instanceof PageInterface) {
                 $child_type = $page->childType();
-
                 if ($child_type !== '') {
                     $this->admin->json_response = [
                         'status' => 'success',
@@ -1883,7 +1900,6 @@ class AdminController extends AdminBaseController
         $this->admin->json_response = [
             'status'  => 'success',
             'child_type' => '',
-//            'message' => $this->admin::translate('PLUGIN_ADMIN.NO_CHILD_TYPE')
         ];
 
         return true;
@@ -1892,12 +1908,23 @@ class AdminController extends AdminBaseController
     /**
      * Handles filtering the page by modular/visible/routable in the pages list.
      *
-     * @return void
+     * @note Used only in legacy pages.
+     *
+     * @return bool
      */
     protected function taskFilterPages()
     {
-        if (!$this->authorizeTask('filter pages', ['admin.pages', 'admin.super'])) {
-            return;
+        if ($this->view !== 'pages-filter') {
+            return false;
+        }
+
+        if (!$this->authorizeTask('filter pages', ['admin.pages', 'admin.pages.list', 'admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
+            return false;
         }
 
         $data = $this->post;
@@ -2012,17 +2039,26 @@ class AdminController extends AdminBaseController
             'results' => $results
         ];
         $this->admin->collection = $collection;
+
+        return true;
     }
 
 
     /**
      * Process the page Markdown
      *
+     * Preview task in the builtin editor.
+     *
      * @return bool True if the action was performed.
      */
     protected function taskProcessMarkdown()
     {
-        if (!$this->authorizeTask('process markdown', ['admin.pages', 'admin.super'])) {
+        if (!$this->authorizeTask('process markdown', ['admin.pages', 'admin.pages.read', 'admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
             return false;
         }
 
@@ -2054,7 +2090,7 @@ class AdminController extends AdminBaseController
             $debugger = $this->grav['debugger'];
             $debugger->addException($e);
 
-            $this->admin->json_response = ['status' => 'error', 'message' => $e->getMessage()];
+            $this->admin->json_response = ['status' => 'error', 'message' => htmlspecialchars($e->getMessage(), ENT_QUOTES | ENT_HTML5, 'UTF-8')];
 
             return false;
         }
@@ -2067,13 +2103,22 @@ class AdminController extends AdminBaseController
     /**
      * Determines the file types allowed to be uploaded
      *
-     * Used by pagemedia field.
+     * Used by pagemedia field. Works only within legacy pages.
      *
      * @return bool True if the action was performed.
      */
     protected function taskListmedia()
     {
-        if (!$this->authorizeTask('list media', ['admin.pages', 'admin.super'])) {
+        if ($this->view !== 'media') {
+            return false;
+        }
+
+        if (!$this->authorizeTask('list media', ['admin.pages', 'admin.pages.read', 'admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
             return false;
         }
 
@@ -2120,13 +2165,22 @@ class AdminController extends AdminBaseController
     /**
      * Handles adding a media file to a page.
      *
-     * Used by pagemedia field.
+     * Used by pagemedia field. Works only within legacy pages.
      *
      * @return bool True if the action was performed.
      */
     protected function taskAddmedia()
     {
-        if (!$this->authorizeTask('add media', ['admin.pages', 'admin.super'])) {
+        if ($this->view !== 'media') {
+            return false;
+        }
+
+        if (!$this->authorizeTask('add media', ['admin.pages', 'admin.pages.update', 'admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
             return false;
         }
 
@@ -2193,7 +2247,7 @@ class AdminController extends AdminBaseController
             $this->admin->json_response = [
                 'status'  => 'error',
                 'message' => sprintf($this->admin::translate('PLUGIN_ADMIN.FILEUPLOAD_UNABLE_TO_UPLOAD'),
-                    $filename, 'Bad filename')
+                    htmlspecialchars($filename, ENT_QUOTES | ENT_HTML5, 'UTF-8'), 'Bad filename')
             ];
 
             return false;
@@ -2212,7 +2266,7 @@ class AdminController extends AdminBaseController
 
 
         // Check extension
-        $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        $extension = strtolower(Utils::pathinfo($filename, PATHINFO_EXTENSION));
 
         // If not a supported type, return
         if (!$extension || !$config->get("media.types.{$extension}")) {
@@ -2224,7 +2278,8 @@ class AdminController extends AdminBaseController
             return false;
         }
 
-        $media = $this->getMedia();
+        $page = $this->admin->page($this->route);
+        $media = $page ? $this->getMedia($page) : null;
         if (!$media) {
             $this->admin->json_response = [
                 'status' => 'error',
@@ -2260,7 +2315,7 @@ class AdminController extends AdminBaseController
 
         // Add metadata if needed
         $include_metadata = Grav::instance()['config']->get('system.media.auto_metadata_exif', false);
-        $basename = str_replace(['@3x', '@2x'], '', pathinfo($filename, PATHINFO_BASENAME));
+        $basename = str_replace(['@3x', '@2x'], '', Utils::pathinfo($filename, PATHINFO_BASENAME));
 
         $metadata = [];
 
@@ -2271,11 +2326,8 @@ class AdminController extends AdminBaseController
             }
         }
 
-        $page = $this->admin->page(true);
-        if ($page) {
-            // DEPRECATED: page
-            $this->grav->fireEvent('onAdminAfterAddMedia', new Event(['object' => $page, 'page' => $page]));
-        }
+        // DEPRECATED: page
+        $this->grav->fireEvent('onAdminAfterAddMedia', new Event(['object' => $page, 'page' => $page]));
 
         $this->admin->json_response = [
             'status'  => 'success',
@@ -2287,12 +2339,18 @@ class AdminController extends AdminBaseController
     }
 
     /**
+     * Request: POST .json/task:compileScss (AJAX call)
+     *
      * @return bool
      */
     protected function taskCompileScss()
     {
+        if (!$this->authorizeTask('compile scss', ['admin.plugins', 'admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
 
-        if (!$this->authorizeTask('compile scss', ['admin.super'])) {
             return false;
         }
 
@@ -2317,17 +2375,22 @@ class AdminController extends AdminBaseController
             ]
         ];
 
-        echo json_encode($json_response);
-        exit;
-
+        $this->sendJsonResponse($json_response);
     }
 
     /**
+     * Request: POST .json/task:exportScss (AJAX call)
+     *
      * @return bool
      */
     protected function taskExportScss()
     {
-        if (!$this->authorizeTask('compile scss', ['admin.pages', 'admin.super'])) {
+        if (!$this->authorizeTask('export scss', ['admin.plugins', 'admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
             return false;
         }
 
@@ -2346,9 +2409,7 @@ class AdminController extends AdminBaseController
             ]
         ];
 
-        echo json_encode($json_response);
-        exit;
-
+        $this->sendJsonResponse($json_response);
     }
 
     /**
@@ -2360,12 +2421,22 @@ class AdminController extends AdminBaseController
      */
     protected function taskDelmedia()
     {
-        if (!$this->authorizeTask('delete media', ['admin.pages', 'admin.super'])) {
+        if ($this->view !== 'media') {
             return false;
         }
 
-        $media = $this->getMedia();
-        if (!$media) {
+        if (!$this->authorizeTask('delete media', ['admin.pages', 'admin.pages.update', 'admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
+            return false;
+        }
+
+        $page = $this->admin->page($this->route);
+        $media = $page ? $this->getMedia($page) : null;
+        if (null === $media) {
             $this->admin->json_response = [
                 'status'  => 'error',
                 'message' => $this->admin::translate('PLUGIN_ADMIN.NO_PAGE_FOUND')
@@ -2374,7 +2445,7 @@ class AdminController extends AdminBaseController
             return false;
         }
 
-        $filename = !empty($this->post['filename']) ? basename($this->post['filename']) : null;
+        $filename = !empty($this->post['filename']) ? Utils::basename($this->post['filename']) : null;
 
         // Handle bad filenames.
         if (!$filename || !Utils::checkFilename($filename)) {
@@ -2393,7 +2464,7 @@ class AdminController extends AdminBaseController
         if ($locator->isStream($targetPath)) {
             $targetPath = $locator->findResource($targetPath, true, true);
         }
-        $fileParts  = pathinfo($filename);
+        $fileParts  = Utils::pathinfo($filename);
 
         $found = false;
 
@@ -2404,7 +2475,7 @@ class AdminController extends AdminBaseController
             if (!$result) {
                 $this->admin->json_response = [
                     'status'  => 'error',
-                    'message' => $this->admin::translate('PLUGIN_ADMIN.FILE_COULD_NOT_BE_DELETED') . ': ' . $filename
+                    'message' => $this->admin::translate('PLUGIN_ADMIN.FILE_COULD_NOT_BE_DELETED') . ': ' . htmlspecialchars($filename, ENT_QUOTES | ENT_HTML5, 'UTF-8')
                 ];
 
                 return false;
@@ -2425,7 +2496,7 @@ class AdminController extends AdminBaseController
                 if (!$result) {
                     $this->admin->json_response = [
                         'status'  => 'error',
-                        'message' => $this->admin::translate('PLUGIN_ADMIN.FILE_COULD_NOT_BE_DELETED') . ': ' . $filename
+                        'message' => $this->admin::translate('PLUGIN_ADMIN.FILE_COULD_NOT_BE_DELETED') . ': ' . htmlspecialchars($filename, ENT_QUOTES | ENT_HTML5, 'UTF-8')
                     ];
 
                     return false;
@@ -2440,21 +2511,18 @@ class AdminController extends AdminBaseController
         if (!$found) {
             $this->admin->json_response = [
                 'status'  => 'error',
-                'message' => $this->admin::translate('PLUGIN_ADMIN.FILE_NOT_FOUND') . ': ' . $filename
+                'message' => $this->admin::translate('PLUGIN_ADMIN.FILE_NOT_FOUND') . ': ' . htmlspecialchars($filename, ENT_QUOTES | ENT_HTML5, 'UTF-8')
             ];
 
             return false;
         }
 
-        $page = $this->admin->page(true);
-        if ($page) {
-            // DEPRECATED: page
-            $this->grav->fireEvent('onAdminAfterDelMedia', new Event(['object' => $page, 'page' => $page]));
-        }
+        // DEPRECATED: page
+        $this->grav->fireEvent('onAdminAfterDelMedia', new Event(['object' => $page, 'page' => $page, 'media' => $media, 'filename' => $filename]));
 
         $this->admin->json_response = [
             'status'  => 'success',
-            'message' => $this->admin::translate('PLUGIN_ADMIN.FILE_DELETED') . ': ' . $filename
+            'message' => $this->admin::translate('PLUGIN_ADMIN.FILE_DELETED') . ': ' . htmlspecialchars($filename, ENT_QUOTES | ENT_HTML5, 'UTF-8')
         ];
 
         return true;
@@ -2580,7 +2648,7 @@ class AdminController extends AdminBaseController
                     $payload = [
                         'name' => $file_page ? $file_page->title() : $fileName,
                         'value' => $file_page ? $file_page->rawRoute() : $file_path,
-                        'item-key' => basename($file_page ? $file_page->route() : $file_path),
+                        'item-key' => Utils::basename($file_page ? $file_page->route() : $file_path),
                         'filename' => $fileName,
                         'extension' => $type === 'dir' ? '' : $fileInfo->getExtension(),
                         'type' => $type,
@@ -2639,11 +2707,13 @@ class AdminController extends AdminBaseController
     /**
      * Get page media.
      *
+     * @param PageInterface|null $page
      * @return Media|null
      */
-    public function getMedia()
+    public function getMedia(PageInterface $page = null)
     {
-        if ($this->view !== 'media') {
+        $page = $page ?? $this->admin->page($this->route);
+        if (!$page) {
             return null;
         }
 
@@ -2653,11 +2723,6 @@ class AdminController extends AdminBaseController
         $order = $this->uri->post('order') ?: null;
         if ($order && is_string($order)) {
             $order = array_map('trim', explode(',', $order));
-        }
-
-        $page = $this->admin->page($this->route);
-        if (!$page) {
-            return null;
         }
 
         $blueprints = $page->blueprints();
@@ -2692,6 +2757,14 @@ class AdminController extends AdminBaseController
     }
 
     /**
+     * @return string
+     */
+    protected function getDataType()
+    {
+        return trim("{$this->view}/{$this->admin->route}", '/');
+    }
+
+    /**
      * Gets the configuration data for a given view & post
      *
      * @param array $data
@@ -2699,10 +2772,9 @@ class AdminController extends AdminBaseController
      */
     protected function prepareData(array $data)
     {
-        $type = trim("{$this->view}/{$this->admin->route}", '/');
-        $data = $this->admin->data($type, $data);
+        $type = $this->getDataType();
 
-        return $data;
+        return $this->admin->data($type, $data);
     }
 
     /**
@@ -2934,10 +3006,21 @@ class AdminController extends AdminBaseController
     }
 
     /**
-     * @return ResponseInterface
+     * Used in 3rd party editors (e.g. next-gen).
+     *
+     * @return ResponseInterface|false
      */
-    protected function taskConvertUrls(): ResponseInterface
+    protected function taskConvertUrls()
     {
+        if (!$this->authorizeTask('access page', ['admin.pages', 'admin.pages.list', 'admin.super'])) {
+            $this->admin->json_response = [
+                'status'  => 'error',
+                'message' => $this->admin::translate('PLUGIN_ADMIN.INSUFFICIENT_PERMISSIONS_FOR_TASK')
+            ];
+
+            return false;
+        }
+
         $request = $this->getRequest();
         $data = $request->getParsedBody();
         $converted_links = [];

@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -17,6 +17,7 @@ use Grav\Common\File\CompiledYamlFile;
 use Grav\Events\PluginsLoadedEvent;
 use RocketTheme\Toolbox\ResourceLocator\UniformResourceLocator;
 use RuntimeException;
+use SplFileInfo;
 use Symfony\Component\EventDispatcher\EventDispatcher;
 use function get_class;
 use function is_object;
@@ -27,7 +28,7 @@ use function is_object;
  */
 class Plugins extends Iterator
 {
-    /** @var array */
+    /** @var array|null */
     public $formFieldTypes;
 
     /** @var bool */
@@ -46,6 +47,7 @@ class Plugins extends Iterator
         $iterator = $locator->getIterator('plugins://');
 
         $plugins = [];
+        /** @var SplFileInfo $directory */
         foreach ($iterator as $directory) {
             if (!$directory->isDir()) {
                 continue;
@@ -56,7 +58,10 @@ class Plugins extends Iterator
         sort($plugins, SORT_NATURAL | SORT_FLAG_CASE);
 
         foreach ($plugins as $plugin) {
-            $this->add($this->loadPlugin($plugin));
+            $object = $this->loadPlugin($plugin);
+            if ($object) {
+                $this->add($object);
+            }
         }
     }
 
@@ -68,13 +73,21 @@ class Plugins extends Iterator
         $blueprints = [];
         $formFields = [];
 
+        $grav = Grav::instance();
+
+        /** @var Config $config */
+        $config = $grav['config'];
+
         /** @var Plugin $plugin */
         foreach ($this->items as $plugin) {
-            if (isset($plugin->features['blueprints'])) {
-                $blueprints["plugin://{$plugin->name}/blueprints"] = $plugin->features['blueprints'];
-            }
-            if (method_exists($plugin, 'getFormFieldTypes')) {
-                $formFields[get_class($plugin)] = isset($plugin->features['formfields']) ? $plugin->features['formfields'] : 0;
+            // Setup only enabled plugins.
+            if ($config["plugins.{$plugin->name}.enabled"] && $plugin instanceof Plugin) {
+                if (isset($plugin->features['blueprints'])) {
+                    $blueprints["plugin://{$plugin->name}/blueprints"] = $plugin->features['blueprints'];
+                }
+                if (method_exists($plugin, 'getFormFieldTypes')) {
+                    $formFields[get_class($plugin)] = $plugin->features['formfields'] ?? 0;
+                }
             }
         }
 
@@ -83,7 +96,7 @@ class Plugins extends Iterator
             arsort($blueprints, SORT_NUMERIC);
 
             /** @var UniformResourceLocator $locator */
-            $locator = Grav::instance()['locator'];
+            $locator = $grav['locator'];
             $locator->addPath('blueprints', '', array_keys($blueprints), ['system', 'blueprints']);
         }
 
@@ -130,7 +143,7 @@ class Plugins extends Iterator
                 $instance->setConfig($config);
                 // Register autoloader.
                 if (method_exists($instance, 'autoload')) {
-                    $instance->autoload();
+                    $instance->setAutoloader($instance->autoload());
                 }
                 // Register event listeners.
                 $events->addSubscriber($instance);
@@ -150,6 +163,7 @@ class Plugins extends Iterator
      * Add a plugin
      *
      * @param Plugin $plugin
+     * @return void
      */
     public function add($plugin)
     {
@@ -171,13 +185,42 @@ class Plugins extends Iterator
     }
 
     /**
+     * @return Plugin[] Index of all plugins by plugin name.
+     */
+    public static function getPlugins(): array
+    {
+        /** @var Plugins $plugins */
+        $plugins = Grav::instance()['plugins'];
+
+        $list = [];
+        foreach ($plugins as $instance) {
+            $list[$instance->name] = $instance;
+        }
+
+        return $list;
+    }
+
+    /**
+     * @param string $name Plugin name
+     * @return Plugin|null Plugin object or null if plugin cannot be found.
+     */
+    public static function getPlugin(string $name)
+    {
+        $list = static::getPlugins();
+
+        return $list[$name] ?? null;
+    }
+
+    /**
      * Return list of all plugin data with their blueprints.
      *
-     * @return array<string,Data>
+     * @return Data[]
      */
     public static function all()
     {
         $grav = Grav::instance();
+
+        /** @var Plugins $plugins */
         $plugins = $grav['plugins'];
         $list = [];
 
@@ -244,33 +287,42 @@ class Plugins extends Iterator
     {
         // NOTE: ALL THE LOCAL VARIABLES ARE USED INSIDE INCLUDED FILE, DO NOT REMOVE THEM!
         $grav = Grav::instance();
+        /** @var UniformResourceLocator $locator */
         $locator = $grav['locator'];
-        $file = $locator->findResource('plugins://' . $name . DS . $name . PLUGIN_EXT);
+        $class = null;
 
+        // Start by attempting to load the plugin_name.php file.
+        $file = $locator->findResource('plugins://' . $name . DS . $name . PLUGIN_EXT);
         if (is_file($file)) {
             // Local variables available in the file: $grav, $name, $file
             $class = include_once $file;
+            if (!is_object($class) || !is_subclass_of($class, Plugin::class, true)) {
+                $class = null;
+            }
+        }
 
-            if (!$class || !is_subclass_of($class, Plugin::class, true)) {
-                $className = Inflector::camelize($name);
-                $pluginClassFormat = [
-                    'Grav\\Plugin\\' . ucfirst($name). 'Plugin',
-                    'Grav\\Plugin\\' . $className . 'Plugin',
-                    'Grav\\Plugin\\' . $className
-                ];
+        // If the class hasn't been initialized yet, guess the class name and create a new instance.
+        if (null === $class) {
+            $className = Inflector::camelize($name);
+            $pluginClassFormat = [
+                'Grav\\Plugin\\' . ucfirst($name). 'Plugin',
+                'Grav\\Plugin\\' . $className . 'Plugin',
+                'Grav\\Plugin\\' . $className
+            ];
 
-                foreach ($pluginClassFormat as $pluginClass) {
-                    if (is_subclass_of($pluginClass, Plugin::class, true)) {
-                        $class = new $pluginClass($name, $grav);
-                        break;
-                    }
+            foreach ($pluginClassFormat as $pluginClass) {
+                if (is_subclass_of($pluginClass, Plugin::class, true)) {
+                    $class = new $pluginClass($name, $grav);
+                    break;
                 }
             }
-        } else {
+        }
+
+        // Log a warning if plugin cannot be found.
+        if (null === $class) {
             $grav['log']->addWarning(
-                sprintf("Plugin '%s' enabled but not found! Try clearing cache with `bin/grav clear-cache`", $name)
+                sprintf("Plugin '%s' enabled but not found! Try clearing cache with `bin/grav clearcache`", $name)
             );
-            return null;
         }
 
         return $class;

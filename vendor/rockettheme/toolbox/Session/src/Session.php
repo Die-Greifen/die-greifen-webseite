@@ -2,6 +2,10 @@
 
 namespace RocketTheme\Toolbox\Session;
 
+use ArrayIterator;
+use IteratorAggregate;
+use RuntimeException;
+
 /**
  * Implements Session handling.
  *
@@ -9,7 +13,7 @@ namespace RocketTheme\Toolbox\Session;
  * @author RocketTheme
  * @license MIT
  */
-class Session implements \IteratorAggregate
+class Session implements IteratorAggregate
 {
     /** @var bool */
     protected $started = false;
@@ -22,13 +26,13 @@ class Session implements \IteratorAggregate
      * @param int $lifetime Defaults to 1800 seconds.
      * @param string $path     Cookie path.
      * @param string|null $domain   Optional, domain for the session
-     * @throws \RuntimeException
+     * @throws RuntimeException
      */
     public function __construct($lifetime, $path, $domain = null)
     {
         // Session is a singleton.
         if (null !== self::$instance) {
-            throw new \RuntimeException('Session has already been initialized.', 500);
+            throw new RuntimeException('Session has already been initialized.', 500);
         }
 
         // Destroy any existing sessions started with session.auto_start
@@ -59,12 +63,12 @@ class Session implements \IteratorAggregate
      * Get current session instance.
      *
      * @return Session
-     * @throws \RuntimeException
+     * @throws RuntimeException
      */
     public function instance()
     {
         if (null === self::$instance) {
-            throw new \RuntimeException("Session hasn't been initialized.", 500);
+            throw new RuntimeException("Session hasn't been initialized.", 500);
         }
 
         return self::$instance;
@@ -74,7 +78,7 @@ class Session implements \IteratorAggregate
      * Starts the session storage
      *
      * @return $this
-     * @throws \RuntimeException
+     * @throws RuntimeException
      */
     public function start()
     {
@@ -84,7 +88,7 @@ class Session implements \IteratorAggregate
         }
 
         if (!session_start()) {
-            throw new \RuntimeException('Failed to start session.', 500);
+            throw new RuntimeException('Failed to start session.', 500);
         }
 
         $this->started = true;
@@ -99,7 +103,7 @@ class Session implements \IteratorAggregate
      */
     public function getId()
     {
-        return session_id();
+        return session_id() ?: null;
     }
 
     /**
@@ -123,7 +127,7 @@ class Session implements \IteratorAggregate
      */
     public function getName()
     {
-        return session_name();
+        return session_name() ?: null;
     }
 
     /**
@@ -146,11 +150,14 @@ class Session implements \IteratorAggregate
      */
     public function invalidate()
     {
-        $params = session_get_cookie_params();
-        setcookie(session_name(), '', time() - 42000,
-            $params['path'], $params['domain'],
-            $params['secure'], $params['httponly']
-        );
+        $name = $this->getName();
+        if (null !== $name) {
+            $params = session_get_cookie_params();
+            setcookie($name, '', time() - 42000,
+                $params['path'], $params['domain'],
+                $params['secure'], $params['httponly']
+            );
+        }
 
         session_unset();
         session_destroy();
@@ -182,6 +189,7 @@ class Session implements \IteratorAggregate
      * @param string $name The attribute name
      * @return bool True if the attribute is defined, false otherwise
      */
+    #[\ReturnTypeWillChange]
     public function __isset($name)
     {
         return isset($_SESSION[$name]);
@@ -193,6 +201,7 @@ class Session implements \IteratorAggregate
      * @param string $name    The attribute name
      * @return mixed
      */
+    #[\ReturnTypeWillChange]
     public function __get($name)
     {
         return isset($_SESSION[$name]) ? $_SESSION[$name] : null;
@@ -205,6 +214,7 @@ class Session implements \IteratorAggregate
      * @param mixed $value
      * @return void
      */
+    #[\ReturnTypeWillChange]
     public function __set($name, $value)
     {
         $_SESSION[$name] = $value;
@@ -216,6 +226,7 @@ class Session implements \IteratorAggregate
      * @param string $name
      * @return void
      */
+    #[\ReturnTypeWillChange]
     public function __unset($name)
     {
         unset($_SESSION[$name]);
@@ -235,11 +246,12 @@ class Session implements \IteratorAggregate
     /**
      * Retrieve an external iterator
      *
-     * @return \ArrayIterator Return an ArrayIterator of $_SESSION
+     * @return ArrayIterator Return an ArrayIterator of $_SESSION
      */
+    #[\ReturnTypeWillChange]
     public function getIterator()
     {
-        return new \ArrayIterator($_SESSION);
+        return new ArrayIterator($_SESSION);
     }
 
     /**

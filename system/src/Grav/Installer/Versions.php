@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Installer
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -36,7 +36,7 @@ final class Versions
      */
     public static function instance(string $filename = null): self
     {
-        $filename = $filename ?? GRAV_ROOT . '/user/config/versions.yaml';
+        $filename = $filename ?? USER_DIR . 'config/versions.yaml';
 
         if (!isset(self::$instance[$filename])) {
             self::$instance[$filename] = new self($filename);

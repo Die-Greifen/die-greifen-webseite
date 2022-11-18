@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Acl
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -21,7 +21,7 @@ use function is_array;
 class PermissionsReader
 {
     /** @var array */
-    private static $types;
+    protected static $types;
 
     /**
      * @param string $filename
@@ -62,12 +62,14 @@ class PermissionsReader
     {
         $list = [];
         foreach ($actions as $name => $action) {
-            $prefixNname = $prefix . $name;
-            $list[$prefixNname] = null;
+            $prefixName = $prefix . $name;
+            $list[$prefixName] = null;
 
             // Support nested sets of actions.
             if (isset($action['actions']) && is_array($action['actions'])) {
-                $list += static::read($action['actions'], "{$prefixNname}.");
+                $innerList = static::read($action['actions'], "{$prefixName}.");
+
+                $list += $innerList;
             }
 
             unset($action['actions']);
@@ -76,7 +78,7 @@ class PermissionsReader
             $action = static::addDefaults($action);
 
             // Build flat list of actions.
-            $list[$prefixNname] = $action;
+            $list[$prefixName] = $action;
         }
 
         return $list;
@@ -131,7 +133,7 @@ class PermissionsReader
      */
     protected static function getDependencies(array $dependencies): array
     {
-        $list = [];
+        $list = [[]];
         foreach ($dependencies as $name => $deps) {
             $current = $deps ? static::getDependencies($deps) : [];
             $current[] = $name;
@@ -172,9 +174,6 @@ class PermissionsReader
             $scopes[] = $action;
 
             $action = array_replace_recursive(...$scopes);
-            if (null === $action) {
-                throw new RuntimeException('Internal error');
-            }
 
             $newType =  $defaults['type'] ?? null;
             if ($newType && $newType !== $type) {

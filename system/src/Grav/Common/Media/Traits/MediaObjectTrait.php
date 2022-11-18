@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Media
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -128,9 +128,27 @@ trait MediaObjectTrait
         }
 
         $alternative->set('ratio', $ratio);
-        $width = $alternative->get('width');
+        $width = $alternative->get('width', 0);
 
         $this->alternatives[$width] = $alternative;
+    }
+
+    /**
+     * @param bool $withDerived
+     * @return array
+     */
+    public function getAlternatives(bool $withDerived = true): array
+    {
+        $alternatives = [];
+        foreach ($this->alternatives + [$this->get('width', 0) => $this] as $size => $alternative) {
+            if ($withDerived || $alternative->filename === Utils::basename($alternative->filepath)) {
+                $alternatives[$size] = $alternative;
+            }
+        }
+
+        ksort($alternatives, SORT_NUMERIC);
+
+        return $alternatives;
     }
 
     /**
@@ -138,6 +156,7 @@ trait MediaObjectTrait
      *
      * @return string
      */
+    #[\ReturnTypeWillChange]
     abstract public function __toString();
 
     /**
@@ -304,6 +323,21 @@ trait MediaObjectTrait
     }
 
     /**
+     * Add custom attribute to medium.
+     *
+     * @param string $attribute
+     * @param string $value
+     * @return $this
+     */
+    public function attribute($attribute = null, $value = '')
+    {
+        if (!empty($attribute)) {
+            $this->attributes[$attribute] = $value;
+        }
+        return $this;
+    }
+
+    /**
      * Switch display mode.
      *
      * @param string $mode
@@ -463,6 +497,7 @@ trait MediaObjectTrait
      * @param array $args
      * @return $this
      */
+    #[\ReturnTypeWillChange]
     public function __call($method, $args)
     {
         $count = count($args);
@@ -539,11 +574,12 @@ trait MediaObjectTrait
 
             foreach ($types as $type) {
                 $thumb = $this->get("thumbnails.{$type}", false);
-
                 if ($thumb) {
-                    $thumb = $thumb instanceof ThumbnailImageMedium ? $thumb : $this->createThumbnail($thumb);
-                    $thumb->parent = $this;
-                    $this->_thumbnail = $thumb;
+                    $image = $thumb instanceof ThumbnailImageMedium ? $thumb : $this->createThumbnail($thumb);
+                    if($image) {
+                        $image->parent = $this;
+                        $this->_thumbnail = $image;
+                    }
                     break;
                 }
             }

@@ -3,6 +3,7 @@
 namespace Grav\Plugin\Console;
 
 use Exception;
+use Grav\Common\Utils;
 use Grav\Common\Yaml;
 use Grav\Console\ConsoleCommand;
 use Symfony\Component\Console\Input\InputOption;
@@ -51,7 +52,7 @@ class FlexConvertDataCommand extends ConsoleCommand
 
         $out_raw = null;
         $in = $input->getOption('in');
-        $in_parts = pathinfo($in);
+        $in_parts = Utils::pathinfo($in);
         $in_extension = $in_parts['extension'];
         $out_extension = $input->getOption('out');
 
@@ -81,7 +82,7 @@ class FlexConvertDataCommand extends ConsoleCommand
         if ($in_extension === 'yaml' || $in_extension === 'yml') {
             $in_data = Yaml::parse($in_raw);
         } elseif ($in_extension === 'json' ) {
-            $in_data = json_decode($in_raw, true);
+            $in_data = json_decode($in_raw, true, 512, JSON_THROW_ON_ERROR);
         } else {
             $io->error('input files with extension ' . $in_extension . ', is not supported');
 

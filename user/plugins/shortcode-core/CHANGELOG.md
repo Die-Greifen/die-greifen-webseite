@@ -1,3 +1,53 @@
+# v5.1.3
+## 06/01/2022
+
+1. [](#improved)
+   * Added a new `display` CLI command to show all registered shortcodes
+
+# v5.1.2
+## 05/10/2022
+
+1. [](#bugfix)
+    * Upgraded `thunderer/shortcode` to 0.7.5 to address a security issue
+
+# v5.1.1
+## 01/11/2022
+
+1. [](#improved)
+    * Improved Twig 2 support
+    * Bugfixes to support latest NextGen version (v1.1.8)
+
+# v5.1.0
+## 12/09/2021
+
+1. [](#new)
+   * Notice shortcode now uses a twig template to allow for easy overriding of style
+1. [](#improved)
+   * Updated vendor libraries to latest
+
+# v5.0.7
+## 09/28/2021
+
+1. [](#improved)
+    * Added `processShortcodesRaw()` using raw_handlers [#104](https://github.com/getgrav/grav-plugin-shortcode-core/pull/104)
+    * Better vertical alignment for inline shortcodes in NextGen Editor
+1. [](#bugfix)
+    * NextGen Editor: Ensure content of children shortcode elements, such as UI Tab content, have a new empty line as prefix and suffix, to ensure Markdown lists are not lost [getgrav/grav-premium-issues#123](https://github.com/getgrav/grav-premium-issues/issues/123)
+
+# v5.0.6
+## 04/27/2021
+
+1. [](#improved)
+    * Added the ability to enable/disable built-in notice CSS
+    * NextGen Editor: Added support for multiple editor instances
+
+# v5.0.5
+## 03/12/2021
+
+1. [](#bugfix)
+    * `SafeEmailShortcode` fixed to be compatible with PHP 7.4
+    * Addresses shortcodes getting repeated in modular subpages [#101](https://github.com/getgrav/grav-plugin-shortcode-core/pull/101)
+
 # v5.0.4
 ## 01/26/2021
 

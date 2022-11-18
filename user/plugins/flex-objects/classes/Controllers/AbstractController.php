@@ -9,11 +9,13 @@ use Grav\Common\Grav;
 use Grav\Common\Inflector;
 use Grav\Common\Language\Language;
 use Grav\Common\Session;
+use Grav\Common\Uri;
 use Grav\Common\User\Interfaces\UserInterface;
 use Grav\Common\Utils;
 use Grav\Framework\Controller\Traits\ControllerResponseTrait;
 use Grav\Framework\Flex\FlexDirectory;
 use Grav\Framework\Flex\FlexForm;
+use Grav\Framework\Flex\FlexFormFlash;
 use Grav\Framework\Flex\Interfaces\FlexFormInterface;
 use Grav\Framework\Flex\Interfaces\FlexObjectInterface;
 use Grav\Framework\Psr7\Response;
@@ -21,6 +23,7 @@ use Grav\Framework\RequestHandler\Exception\NotFoundException;
 use Grav\Framework\RequestHandler\Exception\PageExpiredException;
 use Grav\Framework\Route\Route;
 use Grav\Plugin\FlexObjects\Flex;
+use Grav\Plugin\Form\Forms;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
@@ -181,14 +184,52 @@ abstract class AbstractController implements RequestHandlerInterface
         }
 
         $formName = $this->getPost('__form-name__');
-        $uniqueId = $this->getPost('__unique_form_id__') ?: $formName;
-
-        $form = $object->getForm($type ?? 'edit');
-        if ($uniqueId) {
-            $form->setUniqueId($uniqueId);
+        if ($formName) {
+            /** @var Forms $forms */
+            $forms = $this->getGrav()['forms'];
+            $form = $forms->getActiveForm();
+            if ($form instanceof FlexForm && $form->getName() === $formName && $form->getObject()->getFlexKey() === $object->getFlexKey()) {
+                return $form;
+            }
         }
 
-        return $form;
+        return $object->getForm($type ?? 'edit');
+    }
+
+    /**
+     * @param FlexObjectInterface $object
+     * @param string $type
+     * @return FlexFormFlash
+     */
+    protected function getFormFlash(FlexObjectInterface $object, string $type = '')
+    {
+        /** @var Uri $uri */
+        $uri = $this->grav['uri'];
+        $url = $uri->url;
+
+        $formName = $this->getPost('__form-name__');
+        if (!$formName) {
+            $form = $object->getForm($type);
+            $formName = $form->getName();
+            $uniqueId = $form->getUniqueId();
+        } else {
+            $uniqueId = $this->getPost('__unique_form_id__') ?: $formName ?: sha1($url);
+        }
+
+        /** @var Session $session */
+        $session = $this->grav['session'];
+
+        $config = [
+            'session_id' => $session->getId(),
+            'unique_id' => $uniqueId,
+            'form_name' => $formName,
+        ];
+        $flash = new FlexFormFlash($config);
+        if (!$flash->exists()) {
+            $flash->setUrl($url)->setUser($this->grav['user']);
+        }
+
+        return $flash;
     }
 
     /**
@@ -249,14 +290,16 @@ abstract class AbstractController implements RequestHandlerInterface
 
     /**
      * @param string $string
+     * @param array $args
      * @return string
      */
-    public function translate(string $string): string
+    public function translate(string $string, ...$args): string
     {
         /** @var Language $language */
         $language = $this->grav['language'];
+        array_unshift($args, $string);
 
-        return $language->translate($string);
+        return $language->translate($args);
     }
 
     /**

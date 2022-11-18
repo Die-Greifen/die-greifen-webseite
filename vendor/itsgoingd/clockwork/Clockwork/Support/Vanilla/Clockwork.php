@@ -1,6 +1,8 @@
 <?php namespace Clockwork\Support\Vanilla;
 
 use Clockwork\Clockwork as BaseClockwork;
+use Clockwork\Authentication\NullAuthenticator;
+use Clockwork\Authentication\SimpleAuthenticator;
 use Clockwork\DataSource\PhpDataSource;
 use Clockwork\DataSource\PsrMessageDataSource;
 use Clockwork\Helpers\Serializer;
@@ -41,6 +43,7 @@ class Clockwork
 
 		$this->clockwork->addDataSource(new PhpDataSource);
 		$this->clockwork->storage($this->makeStorage());
+		$this->clockwork->authenticator($this->makeAuthenticator());
 
 		$this->configureSerializer();
 		$this->configureShouldCollect();
@@ -143,6 +146,7 @@ class Clockwork
 			'requestId' => $clockworkRequest->id,
 			'version'   => BaseClockwork::VERSION,
 			'path'      => $this->config['api'],
+			'webPath'   => $this->config['web']['enable'],
 			'token'     => $clockworkRequest->updateToken,
 			'metrics'   => $this->config['features']['performance']['client_metrics'],
 			'toolbar'   => $this->config['toolbar']
@@ -152,7 +156,10 @@ class Clockwork
 	// Handle Clockwork REST api request, retrieves or updates Clockwork metadata
 	public function handleMetadata($request = null, $method = null)
 	{
+		if (! $request) $request = isset($_GET['request']) ? $_GET['request'] : '';
 		if (! $method) $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
+
+		if ($method == 'POST' && $request == 'auth') return $this->authenticate();
 
 		return $method == 'POST' ? $this->updateMetadata($request) : $this->returnMetadata($request);
 	}
@@ -160,7 +167,14 @@ class Clockwork
 	// Retrieve metadata based on the passed Clockwork REST api request and send HTTP response
 	public function returnMetadata($request = null)
 	{
-		if (! $this->config['enable']) return;
+		if (! $this->config['enable']) return $this->response(null, 404);
+
+		$authenticator = $this->clockwork->authenticator();
+		$authenticated = $authenticator->check(isset($_SERVER['HTTP_X_CLOCKWORK_AUTH']) ? $_SERVER['HTTP_X_CLOCKWORK_AUTH'] : '');
+
+		if ($authenticated !== true) {
+			return $this->response([ 'message' => $authenticated, 'requires' => $authenticator->requires() ], 403);
+		}
 
 		return $this->response($this->getMetadata($request));
 	}
@@ -168,7 +182,12 @@ class Clockwork
 	// Returns metadata based on the passed Clockwork REST api request
 	public function getMetadata($request = null)
 	{
-		if (! $this->config['enable']) return $this->response(null, 404);
+		if (! $this->config['enable']) return;
+
+		$authenticator = $this->clockwork->authenticator();
+		$authenticated = $authenticator->check(isset($_SERVER['HTTP_X_CLOCKWORK_AUTH']) ? $_SERVER['HTTP_X_CLOCKWORK_AUTH'] : '');
+
+		if ($authenticated !== true) return;
 
 		if (! $request) $request = isset($_GET['request']) ? $_GET['request'] : '';
 
@@ -235,6 +254,69 @@ class Clockwork
 		return $this->response();
 	}
 
+	// Authanticates access to Clockwork REST api
+	public function authenticate($request = null)
+	{
+		if (! $this->config['enable']) return;
+
+		if (! $request) $request = isset($_GET['request']) ? $_GET['request'] : '';
+
+		$token = $this->clockwork->authenticator()->attempt([
+			'username' => isset($_POST['username']) ? $_POST['username'] : '',
+			'password' => isset($_POST['password']) ? $_POST['password'] : ''
+		]);
+
+		return $this->response([ 'token' => $token ], $token ? 200 : 403);
+	}
+
+	// Returns the Clockwork Web UI as a HTTP response, installs the Web UI on the first run
+	public function returnWeb()
+	{
+		if (! $this->config['web']['enable']) return;
+
+		$this->installWeb();
+
+		$asset = function ($uri) { return "{$this->config['web']['uri']}/{$uri}"; };
+		$metadataPath = $this->config['api'];
+		$url = $this->config['web']['uri'];
+
+		if (! preg_match('#/index.html$#', $url)) {
+			$url = rtrim($url, '/') . '/index.html';
+		}
+
+		ob_start();
+
+		include __DIR__ . '/iframe.html.php';
+
+		$html = ob_get_clean();
+
+		return $this->response($html, null, false);
+	}
+
+	// Installs the Web UI by copying the assets to the public directory, no-op if already installed
+	public function installWeb()
+	{
+		$path = $this->config['web']['path'];
+		$source = __DIR__ . '/../../Web/public';
+
+		if (file_exists("{$path}/index.html")) return;
+
+		@mkdir($path, 0755, true);
+
+		$iterator = new \RecursiveIteratorIterator(
+			new \RecursiveDirectoryIterator($source, \RecursiveDirectoryIterator::SKIP_DOTS),
+			\RecursiveIteratorIterator::SELF_FIRST
+		);
+
+		foreach ($iterator as $item) {
+			if ($item->isDir()) {
+				mkdir("{$path}/" . $iterator->getSubPathName());
+			} else {
+				copy($item, "{$path}/" . $iterator->getSubPathName());
+			}
+		}
+	}
+
 	// Use a PSR-7 request and response instances instead of vanilla php HTTP apis
 	public function usePsrMessage(PsrRequest $request, PsrResponse $response = null)
 	{
@@ -270,6 +352,20 @@ class Clockwork
 		}
 
 		return $storage;
+	}
+
+	// Make an authenticator implementation based on user configuration
+	protected function makeAuthenticator()
+	{
+		$authenticator = $this->config['authentication'];
+
+		if (is_string($authenticator)) {
+			return new $authenticator;
+		} elseif ($authenticator) {
+			return new SimpleAuthenticator($this->config['authentication_password']);
+		} else {
+			return new NullAuthenticator;
+		}
 	}
 
 	// Configure serializer defaults based on user configuration
@@ -337,17 +433,17 @@ class Clockwork
 	}
 
 	// Send a json response, uses the PSR-7 response if set
-	protected function response($data = null, $status = null)
+	protected function response($data = null, $status = null, $json = true)
 	{
-		$this->setHeader('Content-Type', 'application/json');
+		if ($json) $this->setHeader('Content-Type', 'application/json');
 
 		if ($this->psrResponse) {
 			if ($status) $this->psrResponse = $this->psrResponse->withStatus($status);
-			$this->psrResponse->getBody()->write(json_encode($data, \JSON_PARTIAL_OUTPUT_ON_ERROR));
+			$this->psrResponse->getBody()->write($json ? json_encode($data, \JSON_PARTIAL_OUTPUT_ON_ERROR) : $data);
 			return $this->psrResponse;
 		} else {
 			if ($status) http_response_code($status);
-			echo json_encode($data, \JSON_PARTIAL_OUTPUT_ON_ERROR);
+			echo $json ? json_encode($data, \JSON_PARTIAL_OUTPUT_ON_ERROR) : $data;
 		}
 	}
 
@@ -362,19 +458,19 @@ class Clockwork
 		]);
 	}
 
-	// Return the underlaying Clockwork instance
+	// Return the underlying Clockwork instance
 	public function getClockwork()
 	{
 		return $this->clockwork;
 	}
 
-	// Pass any method calls to the underlaying Clockwork instance
+	// Pass any method calls to the underlying Clockwork instance
 	public function __call($method, $args = [])
 	{
 		return $this->clockwork->$method(...$args);
 	}
 
-	// Pass any static method calls to the underlaying Clockwork instance
+	// Pass any static method calls to the underlying Clockwork instance
 	public static function __callStatic($method, $args = [])
 	{
 		return static::instance()->$method(...$args);

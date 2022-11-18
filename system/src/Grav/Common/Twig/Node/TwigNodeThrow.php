@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Twig
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -43,7 +43,7 @@ class TwigNodeThrow extends Node
         $compiler->addDebugInfo($this);
 
         $compiler
-            ->write('throw new \RuntimeException(')
+            ->write('throw new \Grav\Common\Twig\Exception\TwigException(')
             ->subcompile($this->getNode('message'))
             ->write(', ')
             ->write($this->getAttribute('code') ?: 500)

@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * @package    Grav\Common\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -15,6 +15,7 @@ use Grav\Common\Grav;
 use Grav\Common\Page\Interfaces\PageCollectionInterface;
 use Grav\Common\Page\Interfaces\PageInterface;
 use Grav\Common\Page\Pages;
+use Grav\Common\Uri;
 use Grav\Common\Utils;
 use Grav\Framework\Filesystem\Filesystem;
 use RuntimeException;
@@ -97,6 +98,7 @@ trait PageRoutableTrait
     public function activeChild(): bool
     {
         $grav = Grav::instance();
+        /** @var Uri $uri */
         $uri = $grav['uri'];
         /** @var Pages $pages */
         $pages = $grav['pages'];

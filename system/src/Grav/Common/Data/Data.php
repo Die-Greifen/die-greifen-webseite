@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Data
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -264,7 +264,7 @@ class Data implements DataInterface, ArrayAccess, \Countable, JsonSerializable, 
      */
     public function blueprints()
     {
-        if (!$this->blueprints) {
+        if (null === $this->blueprints) {
             $this->blueprints = new Blueprint();
         } elseif (is_callable($this->blueprints)) {
             // Lazy load blueprints.
@@ -335,6 +335,7 @@ class Data implements DataInterface, ArrayAccess, \Countable, JsonSerializable, 
     /**
      * @return array
      */
+    #[\ReturnTypeWillChange]
     public function jsonSerialize()
     {
         return $this->items;

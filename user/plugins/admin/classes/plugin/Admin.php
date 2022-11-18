@@ -10,9 +10,9 @@ use Grav\Common\File\CompiledYamlFile;
 use Grav\Common\Flex\Types\Users\UserObject;
 use Grav\Common\GPM\GPM;
 use Grav\Common\GPM\Licenses;
-use Grav\Common\GPM\Response;
 use Grav\Common\Grav;
 use Grav\Common\Helpers\YamlLinter;
+use Grav\Common\HTTP\Response;
 use Grav\Common\Language\Language;
 use Grav\Common\Language\LanguageCodes;
 use Grav\Common\Page\Collection;
@@ -26,7 +26,6 @@ use Grav\Common\Themes;
 use Grav\Common\Uri;
 use Grav\Common\User\Interfaces\UserCollectionInterface;
 use Grav\Common\User\Interfaces\UserInterface;
-use Grav\Common\User\User;
 use Grav\Common\Utils;
 use Grav\Framework\Acl\Action;
 use Grav\Framework\Acl\Permissions;
@@ -39,7 +38,9 @@ use Grav\Framework\Route\RouteFactory;
 use Grav\Plugin\AdminPlugin;
 use Grav\Plugin\Login\Login;
 use Grav\Plugin\Login\TwoFactorAuth\TwoFactorAuth;
+use JsonException;
 use PicoFeed\Parser\MalformedXmlException;
+use Psr\Http\Message\ServerRequestInterface;
 use RocketTheme\Toolbox\Event\Event;
 use RocketTheme\Toolbox\File\File;
 use RocketTheme\Toolbox\File\JsonFile;
@@ -52,72 +53,63 @@ use PicoFeed\Reader\Reader;
 
 define('LOGIN_REDIRECT_COOKIE', 'grav-login-redirect');
 
+/**
+ * Class Admin
+ * @package Grav\Plugin\Admin
+ */
 class Admin
 {
+    /** @var int */
     public const DEBUG = 1;
+    /** @var int */
     public const MEDIA_PAGINATION_INTERVAL = 20;
+    /** @var string */
     public const TMP_COOKIE_NAME = 'tmp-admin-message';
 
     /** @var Grav */
     public $grav;
-
+    /** @var ServerRequestInterface|null */
+    public $request;
+    /** @var AdminForm */
+    public $form;
     /** @var string */
     public $base;
-
     /** @var string */
     public $location;
-
     /** @var string */
     public $route;
-
-    /** @var User */
+    /** @var UserInterface */
     public $user;
-
     /** @var array */
     public $forgot;
-
     /** @var string */
     public $task;
-
     /** @var array */
     public $json_response;
-
     /** @var Collection */
     public $collection;
-
     /** @var bool */
     public $multilang;
-
     /** @var string */
     public $language;
-
     /** @var array */
     public $languages_enabled = [];
-
     /** @var Uri $uri */
     protected $uri;
-
     /** @var array */
     protected $pages = [];
-
     /** @var Session */
     protected $session;
-
     /** @var Data\Blueprints */
     protected $blueprints;
-
     /** @var GPM */
     protected $gpm;
-
     /** @var int */
     protected $pages_count;
-
     /** @var bool */
     protected $load_additional_files_in_background = false;
-
     /** @var bool */
     protected $loading_additional_files_in_background = false;
-
     /** @var array */
     protected $temp_messages = [];
 
@@ -127,7 +119,7 @@ class Admin
      * @param Grav   $grav
      * @param string $base
      * @param string $location
-     * @param string $route
+     * @param string|null $route
      */
     public function __construct(Grav $grav, $base, $location, $route)
     {
@@ -137,7 +129,7 @@ class Admin
         $this->grav        = $grav;
         $this->base        = $base;
         $this->location    = $location;
-        $this->route       = $route;
+        $this->route       = $route ?? '';
         $this->uri         = $grav['uri'];
         $this->session     = $grav['session'];
 
@@ -153,7 +145,7 @@ class Admin
             $directory = $managed ? $flex->getDirectory('user-accounts') : null;
 
             /** @var UserObject|null $test */
-            $test = $directory ? $directory->getObject($user->username) : null;
+            $test = $directory ? $directory->getObject(mb_strtolower($user->username)) : null;
             if ($test) {
                 $test = clone $test;
                 $test->access = $user->access;
@@ -176,7 +168,7 @@ class Admin
             $this->languages_enabled = (array)$this->grav['config']->get('system.languages.supported', []);
 
             //Set the currently active language for the admin
-            $languageCode = $this->grav['uri']->param('lang');
+            $languageCode = $this->uri->param('lang');
             if (null === $languageCode && !$this->session->admin_lang) {
                 $this->session->admin_lang = $language->getActive() ?? '';
             }
@@ -190,7 +182,8 @@ class Admin
 
     /**
      * @param string $message
-     * @param array $data
+     * @param array|object $data
+     * @return void
      */
     public static function addDebugMessage(string $message, $data = [])
     {
@@ -199,6 +192,9 @@ class Admin
         $debugger->addMessage($message, 'debug', $data);
     }
 
+    /**
+     * @return string[]
+     */
     public static function contentEditor()
     {
         $options = [
@@ -238,6 +234,9 @@ class Admin
         return $languages;
     }
 
+    /**
+     * @return string
+     */
     public function getLanguage(): string
     {
         return $this->language ?: $this->grav['language']->getLanguage() ?: 'en';
@@ -246,23 +245,62 @@ class Admin
     /**
      * Return the found configuration blueprints
      *
+     * @param bool $checkAccess
      * @return array
      */
-    public static function configurations()
+    public static function configurations(bool $checkAccess = false): array
     {
-        $configurations = [];
+        $grav = Grav::instance();
+
+        /** @var Admin $admin */
+        $admin = $grav['admin'];
 
         /** @var UniformResourceIterator $iterator */
-        $iterator = Grav::instance()['locator']->getIterator('blueprints://config');
+        $iterator = $grav['locator']->getIterator('blueprints://config');
 
+        // Find all main level configuration files.
+        $configurations = [];
         foreach ($iterator as $file) {
             if ($file->isDir() || !preg_match('/^[^.].*.yaml$/', $file->getFilename())) {
                 continue;
             }
-            $configurations[] = $file->getBasename('.yaml');
+
+            $name = $file->getBasename('.yaml');
+
+            // Check that blueprint exists and is not hidden.
+            $data = $admin->getConfigurationData('config/'. $name);
+            if (!is_callable([$data, 'blueprints'])) {
+                continue;
+            }
+
+            $blueprint = $data->blueprints();
+            if (!$blueprint) {
+                continue;
+            }
+
+            $test = $blueprint->toArray();
+            if (empty($test['form']['hidden']) && (!empty($test['form']['field']) || !empty($test['form']['fields']))) {
+                $configurations[$name] = true;
+            }
         }
 
-        return $configurations;
+        // Remove scheduler and backups configs (they belong to the tools).
+        unset($configurations['scheduler'], $configurations['backups']);
+
+        // Sort configurations.
+        ksort($configurations);
+        $configurations = ['system' => true, 'site' => true] + $configurations + ['info' => true];
+
+        if ($checkAccess) {
+            // ACL checks.
+            foreach ($configurations as $name => $value) {
+                if (!$admin->authorize(['admin.configuration.' . $name, 'admin.super'])) {
+                    unset($configurations[$name]);
+                }
+            }
+        }
+
+        return array_keys($configurations);
     }
 
     /**
@@ -278,6 +316,9 @@ class Admin
         return $tools;
     }
 
+    /**
+     * @return array
+     */
     public static function toolsPermissions()
     {
         $tools = static::tools();
@@ -310,12 +351,11 @@ class Admin
     /**
      * Static helper method to return the admin form nonce
      *
+     * @param string $action
      * @return string
      */
-    public static function getNonce()
+    public static function getNonce(string $action = 'admin-form')
     {
-        $action = 'admin-form';
-
         return Utils::getNonce($action);
     }
 
@@ -349,11 +389,16 @@ class Admin
         return $admin->getCurrentRoute();
     }
 
+    /**
+     * @param string $path
+     * @param string|null $languageCode
+     * @return Route
+     */
     public function getAdminRoute(string $path = '', $languageCode = null): Route
     {
         /** @var Language $language */
         $language = $this->grav['language'];
-        $languageCode = $languageCode ?? $language->getActive();
+        $languageCode = $languageCode ?? ($language->getActive() ?: null);
         $languagePrefix = $languageCode ? '/' . $languageCode : '';
 
         $root = $this->grav['uri']->rootUrl();
@@ -376,6 +421,11 @@ class Admin
         return RouteFactory::createFromParts($parts);
     }
 
+    /**
+     * @param string $route
+     * @param string|null $languageCode
+     * @return string
+     */
     public function adminUrl(string $route = '', $languageCode = null)
     {
         return $this->getAdminRoute($route, $languageCode)->toString(true);
@@ -396,6 +446,9 @@ class Admin
         return $admin->getCurrentRoute();
     }
 
+    /**
+     * @return string|null
+     */
     public function getCurrentRoute()
     {
         $pages = static::enablePages();
@@ -420,7 +473,8 @@ class Admin
      * Route may or may not be prefixed by /en or /admin or /en/admin.
      *
      * @param string $redirect
-     * @param int$redirectCode
+     * @param int $redirectCode
+     * @return void
      */
     public function redirect($redirect, $redirectCode = 303)
     {
@@ -481,6 +535,9 @@ class Admin
         return count($this->grav['config']->get('system.languages.supported', [])) > 1;
     }
 
+    /**
+     * @return string
+     */
     public static function getTempDir()
     {
         try {
@@ -492,6 +549,9 @@ class Admin
         return $tmp_dir;
     }
 
+    /**
+     * @return array
+     */
     public static function getPageMedia()
     {
         $files = [];
@@ -502,7 +562,7 @@ class Admin
         $route = '/' . ltrim($grav['admin']->route, '/');
 
         /** @var PageInterface $page */
-        $page         = $pages->find($route);
+        $page = $pages->find($route);
         $parent_route = null;
         if ($page) {
             $media = $page->media()->all();
@@ -525,8 +585,7 @@ class Admin
     /**
      * Fetch and delete messages from the session queue.
      *
-     * @param string $type
-     *
+     * @param string|null $type
      * @return array
      */
     public function messages($type = null)
@@ -540,7 +599,9 @@ class Admin
     /**
      * Authenticate user.
      *
-     * @param  array $credentials User credentials.
+     * @param array $credentials User credentials.
+     * @param array $post
+     * @return never-return
      */
     public function authenticate($credentials, $post)
     {
@@ -619,6 +680,10 @@ class Admin
 
     /**
      * Check Two-Factor Authentication.
+     *
+     * @param array $data
+     * @param array $post
+     * @return never-return
      */
     public function twoFa($data, $post)
     {
@@ -656,6 +721,10 @@ class Admin
 
     /**
      * Logout from admin.
+     *
+     * @param array $data
+     * @param array $post
+     * @return never-return
      */
     public function logout($data, $post)
     {
@@ -679,15 +748,8 @@ class Admin
     public static function doAnyUsersExist()
     {
         $accounts = Grav::instance()['accounts'] ?? null;
-        if ($accounts instanceof \Countable) {
-            return $accounts->count() > 0;
-        }
 
-        // TODO: remove old way to check for existence of a user account (Grav < v1.6.9)
-        $account_dir = $file_path = Grav::instance()['locator']->findResource('account://');
-        $user_check = glob($account_dir . '/*.yaml');
-
-        return $user_check;
+        return $accounts && $accounts->count() > 0;
     }
 
     /**
@@ -695,6 +757,7 @@ class Admin
      *
      * @param string $msg
      * @param string $type
+     * @return void
      */
     public function setMessage($msg, $type = 'info')
     {
@@ -703,11 +766,19 @@ class Admin
         $messages->add($msg, $type);
     }
 
+    /**
+     * @param string $msg
+     * @param string $type
+     * @return void
+     */
     public function addTempMessage($msg, $type)
     {
         $this->temp_messages[] = ['message' => $msg, 'scope' => $type];
     }
 
+    /**
+     * @return array
+     */
     public function getTempMessages()
     {
         return $this->temp_messages;
@@ -716,11 +787,9 @@ class Admin
     /**
      * Translate a string to the user-defined language
      *
-     * @param array|mixed $args
-     *
-     * @param mixed       $languages
-     *
-     * @return string
+     * @param array|string $args
+     * @param array|null $languages
+     * @return string|string[]|null
      */
     public static function translate($args, $languages = null)
     {
@@ -773,7 +842,6 @@ class Admin
      * Checks user authorisation to the action.
      *
      * @param  string|string[] $action
-     *
      * @return bool
      */
     public function authorize($action = 'admin.login')
@@ -800,21 +868,47 @@ class Admin
      *
      * @param string $type
      * @param array  $post
-     *
-     * @return mixed
+     * @return object
      * @throws \RuntimeException
      */
     public function data($type, array $post = [])
     {
+        if (!$post) {
+            $post = $this->preparePost($this->grav['uri']->post()['data'] ?? []);
+        }
+
+        try {
+            return $this->getConfigurationData($type, $post);
+        } catch (\RuntimeException $e) {
+            return new Data\Data();
+        }
+    }
+
+    /**
+     * Get configuration data.
+     *
+     * Note: If you pass $post, make sure you pass all the fields in the blueprint or data gets lost!
+     *
+     * @param string $type
+     * @param array|null  $post
+     * @return object
+     * @throws \RuntimeException
+     */
+    public function getConfigurationData($type, array $post = null)
+    {
         static $data = [];
 
         if (isset($data[$type])) {
-            return $data[$type];
-        }
+            $obj = $data[$type];
+            if ($post) {
+                if ($obj instanceof Data\Data) {
+                    $obj = $this->mergePost($obj, $post);
+                } elseif ($obj instanceof UserInterface) {
+                    $obj->update($this->cleanUserPost($post));
+                }
+            }
 
-        if (!$post) {
-            $post = $this->grav['uri']->post();
-            $post = $post['data'] ?? [];
+            return $obj;
         }
 
         // Check to see if a data type is plugin-provided, before looking into core ones
@@ -831,56 +925,48 @@ class Admin
 
         /** @var UniformResourceLocator $locator */
         $locator  = $this->grav['locator'];
-        $filename = $locator->findResource("config://{$type}.yaml", true, true);
+
+        // Configuration file will be saved to the existing config stream.
+        $filename = $locator->findResource('config://') . "/{$type}.yaml";
         $file     = CompiledYamlFile::instance($filename);
 
         if (preg_match('|plugins/|', $type)) {
-            /** @var Plugins $plugins */
-            $plugins = $this->grav['plugins'];
-            $obj     = $plugins->get(preg_replace('|plugins/|', '', $type));
-
-            if (!$obj) {
-                return [];
+            $obj = Plugins::get(preg_replace('|plugins/|', '', $type));
+            if (null === $obj) {
+                throw new \RuntimeException("Plugin '{$type}' doesn't exist!");
             }
-
-            $obj->merge($post);
             $obj->file($file);
 
-            $data[$type] = $obj;
         } elseif (preg_match('|themes/|', $type)) {
             /** @var Themes $themes */
             $themes = $this->grav['themes'];
-            $obj    = $themes->get(preg_replace('|themes/|', '', $type));
-
-            if (!$obj) {
-                return [];
+            $obj = $themes->get(preg_replace('|themes/|', '', $type));
+            if (null === $obj) {
+                throw new \RuntimeException("Theme '{$type}' doesn't exist!");
             }
-
-            $obj->merge($post);
             $obj->file($file);
 
-            $data[$type] = $obj;
         } elseif (preg_match('|users?/|', $type)) {
             /** @var UserCollectionInterface $users */
             $users = $this->grav['accounts'];
 
             $obj = $users->load(preg_replace('|users?/|', '', $type));
-            $obj->update($this->cleanUserPost($post));
 
-            $data[$type] = $obj;
         } elseif (preg_match('|config/|', $type)) {
             $type       = preg_replace('|config/|', '', $type);
             $blueprints = $this->blueprints("config/{$type}");
-            $config     = $this->grav['config'];
-            $obj        = new Data\Data($config->get($type, []), $blueprints);
-            $obj->merge($post);
+            if (!$blueprints->form()) {
+                throw new \RuntimeException("Configuration type '{$type}' doesn't exist!");
+            }
 
-            // FIXME: We shouldn't allow user to change configuration files in system folder!
-            $filename = $this->grav['locator']->findResource("config://{$type}.yaml")
-                ?: $this->grav['locator']->findResource("config://{$type}.yaml", true, true);
+            // Configuration file will be saved to the existing config stream.
+            $filename = $locator->findResource('config://') . "/{$type}.yaml";
             $file     = CompiledYamlFile::instance($filename);
+
+            $config = $this->grav['config'];
+            $obj = new Data\Data($config->get($type, []), $blueprints);
             $obj->file($file);
-            $data[$type] = $obj;
+
         } elseif (preg_match('|media-manager/|', $type)) {
             $filename = base64_decode(preg_replace('|media-manager/|', '', $type));
 
@@ -894,7 +980,7 @@ class Admin
             $obj->file = $file;
             $obj->page = $pages->get(dirname($obj->path));
 
-            $fileInfo = pathinfo($obj->title);
+            $fileInfo = Utils::pathinfo($obj->title);
             $filename = str_replace(['@3x', '@2x'], '', $fileInfo['filename']);
             if (isset($fileInfo['extension'])) {
                 $filename .= '.' . $fileInfo['extension'];
@@ -904,12 +990,41 @@ class Admin
                 $obj->metadata = new Data\Data($obj->page->media()[$filename]->metadata());
             }
 
-            $data[$type] = $obj;
         } else {
             throw new \RuntimeException("Data type '{$type}' doesn't exist!");
         }
 
-        return $data[$type];
+        $data[$type] = $obj;
+        if ($post) {
+            if ($obj instanceof Data\Data) {
+                $obj = $this->mergePost($obj, $post);
+            } elseif ($obj instanceof UserInterface) {
+                $obj->update($this->cleanUserPost($post));
+            }
+        }
+
+        return $obj;
+    }
+
+    /**
+     * @param Data\Data $object
+     * @param array $post
+     * @return Data\Data
+     */
+    protected function mergePost(Data\Data $object, array $post)
+    {
+        $object->merge($post);
+
+        $blueprint = $object->blueprints();
+        $data = $blueprint->flattenData($post, true);
+
+        foreach ($data as $key => $val) {
+            if ($val === null) {
+                $object->set($key, $val);
+            }
+        }
+
+        return $object;
     }
 
     /**
@@ -931,6 +1046,9 @@ class Admin
         return $post;
     }
 
+    /**
+     * @return bool
+     */
     protected function hasErrorMessage()
     {
         $msgs = $this->grav['messages']->all();
@@ -946,7 +1064,6 @@ class Admin
      * Returns blueprints for the given type.
      *
      * @param string $type
-     *
      * @return Data\Blueprint
      */
     public function blueprints($type)
@@ -962,7 +1079,6 @@ class Admin
      * Converts dot notation to array notation.
      *
      * @param  string $name
-     *
      * @return string
      */
     public function field($name)
@@ -976,7 +1092,6 @@ class Admin
      * Get all routes.
      *
      * @param bool $unique
-     *
      * @return array
      */
     public function routes($unique = false)
@@ -1057,6 +1172,10 @@ class Admin
         return [];
     }
 
+    /**
+     * @param string|null $package_slug
+     * @return string[]|string
+     */
     public function license($package_slug)
     {
         return Licenses::get($package_slug);
@@ -1067,7 +1186,6 @@ class Admin
      * packages that can be removed when removing a package.
      *
      * @param string $slug The package slug
-     *
      * @return array|bool
      */
     public function dependenciesThatCanBeRemovedWhenRemoving($slug)
@@ -1081,21 +1199,17 @@ class Admin
 
         $package = $this->getPackageFromGPM($slug);
 
-        if ($package) {
-            if ($package->dependencies) {
-                foreach ($package->dependencies as $dependency) {
-//                    if (count($gpm->getPackagesThatDependOnPackage($dependency)) > 1) {
-//                        continue;
-//                    }
-                    if (isset($dependency['name'])) {
-                        $dependency = $dependency['name'];
-                    }
+        if ($package && $package->dependencies) {
+            foreach ($package->dependencies as $dependency) {
+//                if (count($gpm->getPackagesThatDependOnPackage($dependency)) > 1) {
+//                    continue;
+//                }
+                if (isset($dependency['name'])) {
+                    $dependency = $dependency['name'];
+                }
 
-                    if (!in_array($dependency, $dependencies, true)) {
-                        if (!in_array($dependency, ['admin', 'form', 'login', 'email', 'php'])) {
-                            $dependencies[] = $dependency;
-                        }
-                    }
+                if (!in_array($dependency, $dependencies, true) && !in_array($dependency, ['admin', 'form', 'login', 'email', 'php'])) {
+                    $dependencies[] = $dependency;
                 }
             }
         }
@@ -1121,6 +1235,10 @@ class Admin
         return $this->gpm;
     }
 
+    /**
+     * @param string $package_slug
+     * @return mixed
+     */
     public function getPackageFromGPM($package_slug)
     {
         $package = $this->plugins(true)[$package_slug];
@@ -1135,7 +1253,6 @@ class Admin
      * Get all plugins.
      *
      * @param bool $local
-     *
      * @return mixed
      */
     public function plugins($local = true)
@@ -1164,7 +1281,6 @@ class Admin
      * Get all themes.
      *
      * @param bool $local
-     *
      * @return mixed
      */
     public function themes($local = true)
@@ -1210,9 +1326,8 @@ class Admin
      * Check the passed packages list can be updated
      *
      * @param array $packages
-     *
-     * @throws \Exception
      * @return bool
+     * @throws \Exception
      */
     public function checkPackagesCanBeInstalled($packages)
     {
@@ -1231,7 +1346,6 @@ class Admin
      * to be installed.
      *
      * @param array $packages The packages slugs
-     *
      * @return array|bool
      */
     public function getDependenciesNeededToInstall($packages)
@@ -1248,8 +1362,7 @@ class Admin
      * Used by the Dashboard in the admin to display the X latest pages
      * that have been modified
      *
-     * @param  integer $count number of pages to pull back
-     *
+     * @param  int $count number of pages to pull back
      * @return array|null
      */
     public function latestPages($count = 10)
@@ -1343,7 +1456,6 @@ class Admin
      * Determine if the plugin or theme info passed is from Team Grav
      *
      * @param object $info Plugin or Theme info object
-     *
      * @return bool
      */
     public function isTeamGrav($info)
@@ -1355,7 +1467,6 @@ class Admin
      * Determine if the plugin or theme info passed is premium
      *
      * @param object $info Plugin or Theme info object
-     *
      * @return bool
      */
     public function isPremiumProduct($info)
@@ -1368,13 +1479,12 @@ class Admin
      *
      * @return string The phpinfo() output
      */
-    function phpinfo()
+    public function phpinfo()
     {
         if (function_exists('phpinfo')) {
             ob_start();
             phpinfo();
             $pinfo = ob_get_clean();
-
             $pinfo = preg_replace('%^.*<body>(.*)</body>.*$%ms', '$1', $pinfo);
 
             return $pinfo;
@@ -1386,8 +1496,7 @@ class Admin
     /**
      * Guest date format based on euro/US
      *
-     * @param string $date
-     *
+     * @param string|null $date
      * @return string
      */
     public function guessDateFormat($date)
@@ -1410,6 +1519,7 @@ class Admin
             'g:ia'
         ];
 
+        $date = (string)$date;
         if (!isset($guess[$date])) {
             $guess[$date] = 'd-m-Y H:i';
             foreach ($date_formats as $date_format) {
@@ -1431,6 +1541,11 @@ class Admin
         return $guess[$date];
     }
 
+    /**
+     * @param string $date
+     * @param string $format
+     * @return bool
+     */
     public function validateDate($date, $format)
     {
         $d = DateTime::createFromFormat($format, $date);
@@ -1440,7 +1555,6 @@ class Admin
 
     /**
      * @param string $php_format
-     *
      * @return string
      */
     public function dateformatToMomentJS($php_format)
@@ -1865,7 +1979,7 @@ class Admin
         $page = $path ? $pages->find($path, true) : $pages->root();
 
         if (!$page) {
-            $slug = basename($path);
+            $slug = Utils::basename($path);
 
             if ($slug === '') {
                 return null;
@@ -2293,7 +2407,7 @@ class Admin
     /**
      * Get changelog for a given GPM package based on slug
      *
-     * @param null $slug
+     * @param string|null $slug
      * @return array
      */
     public function getChangelog($slug = null)
@@ -2313,5 +2427,67 @@ class Admin
         }
 
         return $changelog;
+    }
+
+    /**
+     * Prepare and return POST data.
+     *
+     * @param array $post
+     * @return array
+     */
+    public function preparePost($post): array
+    {
+        if (!is_array($post)) {
+            return [];
+        }
+
+        unset($post['task']);
+
+        // Decode JSON encoded fields and merge them to data.
+        if (isset($post['_json'])) {
+            $post = array_replace_recursive($post, $this->jsonDecode($post['_json']));
+            unset($post['_json']);
+        }
+
+        return $this->cleanDataKeys($post);
+    }
+
+    /**
+     * Recursively JSON decode data.
+     *
+     * @param array $data
+     * @return array
+     * @throws JsonException
+     */
+    private function jsonDecode(array $data): array
+    {
+        foreach ($data as &$value) {
+            if (is_array($value)) {
+                $value = $this->jsonDecode($value);
+            } else {
+                $value = json_decode($value, true, 512, JSON_THROW_ON_ERROR);
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * @param array $source
+     * @return array
+     */
+    private function cleanDataKeys(array $source): array
+    {
+        $out = [];
+        foreach ($source as $key => $value) {
+            $key = str_replace(['%5B', '%5D'], ['[', ']'], $key);
+            if (is_array($value)) {
+                $out[$key] = $this->cleanDataKeys($value);
+            } else {
+                $out[$key] = $value;
+            }
+        }
+
+        return $out;
     }
 }

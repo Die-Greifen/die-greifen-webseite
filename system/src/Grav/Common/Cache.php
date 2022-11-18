@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -71,6 +71,7 @@ class Cache extends Getters
         'cache://twig/',
         'cache://doctrine/',
         'cache://compiled/',
+        'cache://clockwork/',
         'cache://validated-',
         'cache://images',
         'asset://',
@@ -80,6 +81,7 @@ class Cache extends Getters
         'cache://twig/',
         'cache://doctrine/',
         'cache://compiled/',
+        'cache://clockwork/',
         'cache://validated-',
         'asset://',
     ];
@@ -125,7 +127,6 @@ class Cache extends Getters
      */
     public function init(Grav $grav)
     {
-        /** @var Config $config */
         $this->config = $grav['config'];
         $this->now = time();
 
@@ -140,7 +141,7 @@ class Cache extends Getters
         $uniqueness = substr(md5($uri->rootUrl(true) . $this->config->key() . GRAV_VERSION), 2, 8);
 
         // Cache key allows us to invalidate all cache on configuration changes.
-        $this->key = ($prefix ? $prefix : 'g') . '-' . $uniqueness;
+        $this->key = ($prefix ?: 'g') . '-' . $uniqueness;
         $this->cache_dir = $grav['locator']->findResource('cache://doctrine/' . $uniqueness, true, true);
         $this->driver_setting = $this->config->get('system.cache.driver');
         $this->driver = $this->getCacheDriver();
@@ -176,7 +177,7 @@ class Cache extends Getters
     public function purgeOldCache()
     {
         $cache_dir = dirname($this->cache_dir);
-        $current = basename($this->cache_dir);
+        $current = Utils::basename($this->cache_dir);
         $count = 0;
 
         foreach (new DirectoryIterator($cache_dir) as $file) {
@@ -296,6 +297,7 @@ class Cache extends Getters
                     $redis = new \Redis();
                     $socket = $this->config->get('system.cache.redis.socket', false);
                     $password = $this->config->get('system.cache.redis.password', false);
+                    $databaseId = $this->config->get('system.cache.redis.database', 0);
 
                     if ($socket) {
                         $redis->connect($socket);
@@ -309,6 +311,11 @@ class Cache extends Getters
                     // Authenticate with password if set
                     if ($password && !$redis->auth($password)) {
                         throw new \RedisException('Redis authentication failed');
+                    }
+
+                    // Select alternate ( !=0 ) database ID if set
+                    if ($databaseId && !$redis->select($databaseId)) {
+                        throw new \RedisException('Could not select alternate Redis database ID');
                     }
 
                     $driver = new DoctrineCache\RedisCache();
@@ -492,7 +499,7 @@ class Cache extends Getters
                                 $anything = true;
                             }
                         } elseif (is_dir($file)) {
-                            if (Folder::delete($file)) {
+                            if (Folder::delete($file, false)) {
                                 $anything = true;
                             }
                         }
@@ -611,11 +618,7 @@ class Cache extends Getters
      */
     public function isVolatileDriver($setting)
     {
-        if (in_array($setting, ['apc', 'apcu', 'xcache', 'wincache'])) {
-            return true;
-        }
-
-        return false;
+        return in_array($setting, ['apc', 'apcu', 'xcache', 'wincache'], true);
     }
 
     /**

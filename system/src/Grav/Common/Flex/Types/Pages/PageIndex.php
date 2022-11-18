@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * @package    Grav\Common\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -18,16 +18,20 @@ use Grav\Common\File\CompiledYamlFile;
 use Grav\Common\Flex\Traits\FlexGravTrait;
 use Grav\Common\Flex\Traits\FlexIndexTrait;
 use Grav\Common\Grav;
+use Grav\Common\Language\Language;
 use Grav\Common\Page\Header;
 use Grav\Common\Page\Interfaces\PageCollectionInterface;
 use Grav\Common\Page\Interfaces\PageInterface;
+use Grav\Common\User\Interfaces\UserInterface;
 use Grav\Common\Utils;
 use Grav\Framework\Flex\FlexDirectory;
-use Grav\Framework\Flex\Interfaces\FlexCollectionInterface;
 use Grav\Framework\Flex\Interfaces\FlexStorageInterface;
 use Grav\Framework\Flex\Pages\FlexPageIndex;
 use InvalidArgumentException;
 use RuntimeException;
+use function array_slice;
+use function count;
+use function in_array;
 use function is_array;
 use function is_string;
 
@@ -35,8 +39,10 @@ use function is_string;
  * Class GravPageObject
  * @package Grav\Plugin\FlexObjects\Types\GravPages
  *
- * @extends FlexPageIndex<string,PageObject,PageCollection>
- * @mixin PageCollection
+ * @template T of PageObject
+ * @template C of PageCollection
+ * @extends FlexPageIndex<T,C>
+ * @implements PageCollectionInterface<string,T>
  *
  * @method PageIndex withModules(bool $bool = true)
  * @method PageIndex withPages(bool $bool = true)
@@ -98,6 +104,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
     /**
      * @param string $key
      * @return PageObject|null
+     * @phpstan-return T|null
      */
     public function get($key)
     {
@@ -106,15 +113,21 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
         }
 
         $element = parent::get($key);
+        if (null === $element) {
+            return null;
+        }
+
         if (isset($params)) {
             $element = $element->getTranslation(ltrim($params, '.'));
         }
+
+        \assert(null === $element || $element instanceof PageObject);
 
         return $element;
     }
 
     /**
-     * @return PageObject
+     * @return PageInterface
      */
     public function getRoot()
     {
@@ -163,6 +176,32 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
     }
 
     /**
+     * @param string|null $languageCode
+     * @param bool|null $fallback
+     * @return static
+     * @phpstan-return static<T,C>
+     */
+    public function withTranslated(string $languageCode = null, bool $fallback = null)
+    {
+        if (null === $languageCode) {
+            return $this;
+        }
+
+        $entries = $this->translateEntries($this->getEntries(), $languageCode, $fallback);
+        $params = ['language' => $languageCode, 'language_fallback' => $fallback] + $this->getParams();
+
+        return $this->createFrom($entries)->setParams($params);
+    }
+
+    /**
+     * @return string|null
+     */
+    public function getLanguage(): ?string
+    {
+        return $this->_params['language'] ?? null;
+    }
+
+    /**
      * Get the collection params
      *
      * @return array
@@ -170,6 +209,17 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
     public function getParams(): array
     {
         return $this->_params ?? [];
+    }
+
+    /**
+     * Get the collection param
+     *
+     * @param string $name
+     * @return mixed
+     */
+    public function getParam(string $name)
+    {
+        return $this->_params[$name] ?? null;
     }
 
     /**
@@ -186,6 +236,20 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
     }
 
     /**
+     * Set a parameter to the Collection
+     *
+     * @param string $name
+     * @param mixed $value
+     * @return $this
+     */
+    public function setParam(string $name, $value)
+    {
+        $this->_params[$name] = $value;
+
+        return $this;
+    }
+
+    /**
      * Get the collection params
      *
      * @return array
@@ -193,6 +257,15 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
     public function params(): array
     {
         return $this->getParams();
+    }
+
+        /**
+     * {@inheritdoc}
+     * @see FlexCollectionInterface::getCacheKey()
+     */
+    public function getCacheKey(): string
+    {
+        return $this->getTypePrefix() . $this->getFlexType() . '.' . sha1(json_encode($this->getKeys()) . $this->getKeyField() . $this->getLanguage());
     }
 
     /**
@@ -210,6 +283,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      * @param array $filters
      * @param bool $recursive
      * @return static
+     * @phpstan-return static<T,C>
      */
     public function filterBy(array $filters, bool $recursive = false)
     {
@@ -266,10 +340,14 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
     /**
      * @param array $filters
      * @return static
+     * @phpstan-return static<T,C>
      */
     protected function filterByParent(array $filters)
     {
-        return parent::filterBy($filters);
+        /** @var static $index */
+        $index = parent::filterBy($filters);
+
+        return $index;
     }
 
     /**
@@ -300,13 +378,40 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
             'type' => ['root', 'dir'],
         ];
 
-        return $this->getLevelListingRecurse($options);
+        $key = 'page.idx.lev.' . sha1(json_encode($options, JSON_THROW_ON_ERROR) . $this->getCacheKey());
+        $checksum = $this->getCacheChecksum();
+
+        $cache = $this->getCache('object');
+
+        /** @var Debugger $debugger */
+        $debugger = Grav::instance()['debugger'];
+
+        $result = null;
+        try {
+            $cached = $cache->get($key);
+            $test = $cached[0] ?? null;
+            $result = $test === $checksum ? ($cached[1] ?? null) : null;
+        } catch (\Psr\SimpleCache\InvalidArgumentException $e) {
+            $debugger->addException($e);
+        }
+
+        try {
+            if (null === $result) {
+                $result = $this->getLevelListingRecurse($options);
+                $cache->set($key, [$checksum, $result]);
+            }
+        } catch (\Psr\SimpleCache\InvalidArgumentException $e) {
+            $debugger->addException($e);
+        }
+
+        return $result;
     }
 
     /**
      * @param array $entries
      * @param string|null $keyField
      * @return static
+     * @phpstan-return static<T,C>
      */
     protected function createFrom(array $entries, string $keyField = null)
     {
@@ -315,6 +420,96 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
         $index->_root = $this->getRoot();
 
         return $index;
+    }
+
+    /**
+     * @param array $entries
+     * @param string $lang
+     * @param bool|null $fallback
+     * @return array
+     */
+    protected function translateEntries(array $entries, string $lang, bool $fallback = null): array
+    {
+        $languages = $this->getFallbackLanguages($lang, $fallback);
+        foreach ($entries as $key => &$entry) {
+            // Find out which version of the page we should load.
+            $translations = $this->getLanguageTemplates((string)$key);
+            if (!$translations) {
+                // No translations found, is this a folder?
+                continue;
+            }
+
+            // Find a translation.
+            $template = null;
+            foreach ($languages as $code) {
+                if (isset($translations[$code])) {
+                    $template = $translations[$code];
+                    break;
+                }
+            }
+
+            // We couldn't find a translation, remove entry from the list.
+            if (!isset($code, $template)) {
+                unset($entries['key']);
+                continue;
+            }
+
+            // Get the main key without template and language.
+            [$main_key,] = explode('|', $entry['storage_key'] . '|', 2);
+
+            // Update storage key and language.
+            $entry['storage_key'] = $main_key . '|' . $template . '.' . $code;
+            $entry['lang'] = $code;
+        }
+        unset($entry);
+
+        return $entries;
+    }
+
+    /**
+     * @return array
+     */
+    protected function getLanguageTemplates(string $key): array
+    {
+        $meta = $this->getMetaData($key);
+        $template = $meta['template'] ?? 'folder';
+        $translations = $meta['markdown'] ?? [];
+        $list = [];
+        foreach ($translations as $code => $search) {
+            if (isset($search[$template])) {
+                // Use main template if possible.
+                $list[$code] = $template;
+            } elseif (!empty($search)) {
+                // Fall back to first matching template.
+                $list[$code] = key($search);
+            }
+        }
+
+        return $list;
+    }
+
+    /**
+     * @param string|null $languageCode
+     * @param bool|null $fallback
+     * @return array
+     */
+    protected function getFallbackLanguages(string $languageCode = null, bool $fallback = null): array
+    {
+        $fallback = $fallback ?? true;
+        if (!$fallback && null !== $languageCode) {
+            return [$languageCode];
+        }
+
+        $grav = Grav::instance();
+
+        /** @var Language $language */
+        $language = $grav['language'];
+        $languageCode = $languageCode ?? '';
+        if ($languageCode === '' && $fallback) {
+            return $language->getFallbackLanguages(null, true);
+        }
+
+        return $fallback ? $language->getFallbackLanguages($languageCode, true) : [$languageCode];
     }
 
     /**
@@ -332,10 +527,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
         $language = $options['lang'];
 
         $status = 'error';
-        $msg = null;
         $response = [];
-        $children = null;
-        $sub_route = null;
         $extra = null;
 
         // Handle leaf_route
@@ -369,6 +561,9 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
         $filters = array_filter($filters, static function($val) { return $val !== null && $val !== ''; });
 
         if ($page) {
+            $status = 'success';
+            $msg = 'PLUGIN_ADMIN.PAGE_ROUTE_FOUND';
+
             if ($page->root() && (!$filter_type || in_array('root', $filter_type, true))) {
                 if ($field) {
                     $response[] = [
@@ -408,17 +603,16 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
                 }
             }
 
-            $status = 'success';
-            $msg = 'PLUGIN_ADMIN.PAGE_ROUTE_FOUND';
-
+            /** @var PageCollection|PageIndex $children */
+            $children = $page->children();
             /** @var PageIndex $children */
-            $children = $page->children()->getIndex();
-            $selectedChildren = $children->filterBy($filters, true);
+            $children = $children->getIndex();
+            $selectedChildren = $children->filterBy($filters + ['language' => $language], true);
 
             /** @var Header $header */
             $header = $page->header();
 
-            if (!$field && $header->get('admin.children_display_order') === 'collection' && ($orderby = $header->get('content.order.by'))) {
+            if (!$field && $header->get('admin.children_display_order', 'collection') === 'collection' && ($orderby = $header->get('content.order.by'))) {
                 // Use custom sorting by page header.
                 $sortby = $orderby;
                 $order = $header->get('content.order.dir', $order);
@@ -430,6 +624,9 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
                 $selectedChildren = $selectedChildren->order($sortby, $order, $custom ?? null);
             }
 
+            /** @var UserInterface|null $user */
+            $user = Grav::instance()['user'] ?? null;
+
             /** @var PageObject $child */
             foreach ($selectedChildren as $child) {
                 $selected = $child->path() === $extra;
@@ -439,7 +636,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
                     $payload = [
                         'name' => $child->menu(),
                         'value' => $child->rawRoute(),
-                        'item-key' => basename($child->rawRoute() ?? ''),
+                        'item-key' => Utils::basename($child->rawRoute() ?? ''),
                         'filename' => $child->folder(),
                         'extension' => $child->extension(),
                         'type' => 'dir',
@@ -449,6 +646,10 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
                         'has-children' => $child_count > 0
                     ];
                 } else {
+                    $lang = $child->findTranslation($language) ?? 'n/a';
+                    /** @var PageObject $child */
+                    $child = $child->getTranslation($language) ?? $child;
+
                     // TODO: all these features are independent from each other, we cannot just have one icon/color to catch all.
                     // TODO: maybe icon by home/modular/page/folder (or even from blueprints) and color by visibility etc..
                     if ($child->home()) {
@@ -468,9 +669,6 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
                         $child->visible() ? 'visible' : 'non-visible',
                         $child->routable() ? 'routable' : 'non-routable'
                     ];
-                    $lang = $child->findTranslation($language) ?? 'n/a';
-                    /** @var PageObject $child */
-                    $child = $child->getTranslation($language) ?? $child;
                     $extras = [
                         'template' => $child->template(),
                         'lang' => $lang ?: null,
@@ -482,21 +680,25 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
                         'visible' => $child->visible(),
                         'routable' => $child->routable(),
                         'tags' => $tags,
-                        'actions' => $this->getListingActions($child),
+                        'actions' => $this->getListingActions($child, $user),
                     ];
                     $extras = array_filter($extras, static function ($v) {
                         return $v !== null;
                     });
+
+                    /** @var PageIndex $tmp */
                     $tmp = $child->children()->getIndex();
                     $child_count = $tmp->count();
                     $count = $filters ? $tmp->filterBy($filters, true)->count() : null;
+                    $route = $child->getRoute();
+                    $route = $route ? ($route->toString(false) ?: '/') : '';
                     $payload = [
-                        'item-key' => basename($child->rawRoute() ?? $child->getKey()),
+                        'item-key' => htmlspecialchars(Utils::basename($child->rawRoute() ?? $child->getKey())),
                         'icon' => $icon,
                         'title' => htmlspecialchars($child->menu()),
                         'route' => [
-                            'display' => $child->getRoute()->toString(false) ?: '/',
-                            'raw' => $child->rawRoute(),
+                            'display' => htmlspecialchars($route) ?: null,
+                            'raw' => htmlspecialchars($child->rawRoute()),
                         ],
                         'modified' => $this->jsDate($child->modified()),
                         'child_count' => $child_count ?: null,
@@ -530,25 +732,26 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
             $response = Utils::arrayFlatten($sorted);
         }
 
-        return [$status, $msg ?? 'PLUGIN_ADMIN.NO_ROUTE_PROVIDED', $response, $path];
+        return [$status, $msg, $response, $path];
     }
 
     /**
      * @param PageObject $object
+     * @param UserInterface $user
      * @return array
      */
-    protected function getListingActions(PageObject $object): array
+    protected function getListingActions(PageObject $object, UserInterface $user): array
     {
         $actions = [];
-        if ($object->isAuthorized('read')) {
+        if ($object->isAuthorized('read', null, $user)) {
             $actions[] = 'preview';
             $actions[] = 'edit';
         }
-        if ($object->isAuthorized('update')) {
+        if ($object->isAuthorized('update', null, $user)) {
             $actions[] = 'copy';
             $actions[] = 'move';
         }
-        if ($object->isAuthorized('delete')) {
+        if ($object->isAuthorized('delete', null, $user)) {
             $actions[] = 'delete';
         }
 
@@ -595,6 +798,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      *
      * @param PageInterface $page
      * @return PageCollection
+     * @phpstan-return C
      */
     public function addPage(PageInterface $page)
     {
@@ -606,6 +810,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      * Create a copy of this collection
      *
      * @return static
+     * @phpstan-return static<T,C>
      */
     public function copy()
     {
@@ -618,6 +823,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      *
      * @param PageCollectionInterface $collection
      * @return PageCollection
+     * @phpstan-return C
      */
     public function merge(PageCollectionInterface $collection)
     {
@@ -630,6 +836,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      *
      * @param PageCollectionInterface $collection
      * @return PageCollection
+     * @phpstan-return C
      */
     public function intersect(PageCollectionInterface $collection)
     {
@@ -641,6 +848,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      *
      * @param int $size
      * @return PageCollection[]
+     * @phpstan-return C[]
      */
     public function batch($size)
     {
@@ -650,12 +858,12 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
     /**
      * Remove item from the list.
      *
-     * @param PageInterface|string|null $key
-     *
-     * @return $this
+     * @param string $key
+     * @return PageObject|null
+     * @phpstan-return T|null
      * @throws InvalidArgumentException
      */
-    public function remove($key = null)
+    public function remove($key)
     {
         return $this->getCollection()->remove($key);
     }
@@ -668,6 +876,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      * @param array  $manual
      * @param string $sort_flags
      * @return static
+     * @phpstan-return static<T,C>
      */
     public function order($by, $dir = 'asc', $manual = null, $sort_flags = null)
     {
@@ -711,6 +920,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      *
      * @param  string $path
      * @return PageObject|null  The previous item.
+     * @phpstan-return T|null
      */
     public function prevSibling($path)
     {
@@ -725,6 +935,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      *
      * @param  string $path
      * @return PageObject|null The next item.
+     * @phpstan-return T|null
      */
     public function nextSibling($path)
     {
@@ -740,6 +951,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      * @param  string  $path
      * @param  int $direction either -1 or +1
      * @return PageObject|false    The sibling item.
+     * @phpstan-return T|false
      */
     public function adjacentSibling($path, $direction = 1)
     {
@@ -765,17 +977,18 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
 
     /**
      * Returns the items between a set of date ranges of either the page date field (default) or
-     * an arbitrary datetime page field where end date is optional
-     * Dates can be passed in as text that strtotime() can process
+     * an arbitrary datetime page field where start date and end date are optional
+     * Dates must be passed in as text that strtotime() can process
      * http://php.net/manual/en/function.strtotime.php
      *
-     * @param string $startDate
-     * @param bool $endDate
+     * @param string|null $startDate
+     * @param string|null $endDate
      * @param string|null $field
      * @return static
+     * @phpstan-return static<T,C>
      * @throws Exception
      */
-    public function dateRange($startDate, $endDate = false, $field = null)
+    public function dateRange($startDate = null, $endDate = null, $field = null)
     {
         $collection = $this->__call('dateRange', [$startDate, $endDate, $field]);
 
@@ -797,6 +1010,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      * Creates new collection with only visible pages
      *
      * @return static The collection with only visible pages
+     * @phpstan-return static<T,C>
      */
     public function visible()
     {
@@ -809,6 +1023,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      * Creates new collection with only non-visible pages
      *
      * @return static The collection with only non-visible pages
+     * @phpstan-return static<T,C>
      */
     public function nonVisible()
     {
@@ -821,6 +1036,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      * Creates new collection with only non-modular pages
      *
      * @return static The collection with only non-modular pages
+     * @phpstan-return static<T,C>
      */
     public function pages()
     {
@@ -833,6 +1049,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      * Creates new collection with only modular pages
      *
      * @return static The collection with only modular pages
+     * @phpstan-return static<T,C>
      */
     public function modules()
     {
@@ -845,6 +1062,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      * Creates new collection with only modular pages
      *
      * @return static The collection with only modular pages
+     * @phpstan-return static<T,C>
      */
     public function modular()
     {
@@ -855,6 +1073,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      * Creates new collection with only non-modular pages
      *
      * @return static The collection with only non-modular pages
+     * @phpstan-return static<T,C>
      */
     public function nonModular()
     {
@@ -865,6 +1084,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      * Creates new collection with only published pages
      *
      * @return static The collection with only published pages
+     * @phpstan-return static<T,C>
      */
     public function published()
     {
@@ -877,6 +1097,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      * Creates new collection with only non-published pages
      *
      * @return static The collection with only non-published pages
+     * @phpstan-return static<T,C>
      */
     public function nonPublished()
     {
@@ -889,6 +1110,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      * Creates new collection with only routable pages
      *
      * @return static The collection with only routable pages
+     * @phpstan-return static<T,C>
      */
     public function routable()
     {
@@ -901,6 +1123,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      * Creates new collection with only non-routable pages
      *
      * @return static The collection with only non-routable pages
+     * @phpstan-return static<T,C>
      */
     public function nonRoutable()
     {
@@ -914,6 +1137,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      *
      * @param string $type
      * @return static The collection
+     * @phpstan-return static<T,C>
      */
     public function ofType($type)
     {
@@ -927,6 +1151,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      *
      * @param string[] $types
      * @return static The collection
+     * @phpstan-return static<T,C>
      */
     public function ofOneOfTheseTypes($types)
     {
@@ -940,6 +1165,7 @@ class PageIndex extends FlexPageIndex implements PageCollectionInterface
      *
      * @param array $accessLevels
      * @return static The collection
+     * @phpstan-return static<T,C>
      */
     public function ofOneOfTheseAccessLevels($accessLevels)
     {

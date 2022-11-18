@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * @package    Grav\Framework\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -13,6 +13,7 @@ namespace Grav\Framework\Flex\Storage;
 
 use Grav\Common\Data\Data;
 use Grav\Common\Filesystem\Folder;
+use Grav\Common\Utils;
 use Grav\Framework\Filesystem\Filesystem;
 use InvalidArgumentException;
 use LogicException;
@@ -30,7 +31,7 @@ class SimpleStorage extends AbstractFilesystemStorage
     protected $dataFolder;
     /** @var string */
     protected $dataPattern;
-    /** @var string */
+    /** @var string|null */
     protected $prefix;
     /** @var array|null */
     protected $data;
@@ -53,9 +54,9 @@ class SimpleStorage extends AbstractFilesystemStorage
         $filesystem = Filesystem::getInstance(true);
 
         $extension = $this->dataFormatter->getDefaultFileExtension();
-        $pattern = basename($options['folder']);
+        $pattern = Utils::basename($options['folder']);
 
-        $this->dataPattern = basename($pattern, $extension) . $extension;
+        $this->dataPattern = Utils::basename($pattern, $extension) . $extension;
         $this->dataFolder = $filesystem->dirname($options['folder']);
         $this->keyField = $options['key'] ?? 'storage_key';
         $this->keyLen = (int)($options['key_len'] ?? 32);
@@ -414,9 +415,13 @@ class SimpleStorage extends AbstractFilesystemStorage
             }
             $file->save($content);
             $this->modified = (int)$file->modified(); // cast false to 0
-            $file->free();
         } catch (RuntimeException $e) {
             throw new RuntimeException(sprintf('Flex save(): %s', $e->getMessage()));
+        } finally {
+            if (isset($file)) {
+                $file->free();
+                unset($file);
+            }
         }
     }
 
@@ -428,7 +433,7 @@ class SimpleStorage extends AbstractFilesystemStorage
      */
     protected function getKeyFromPath(string $path): string
     {
-        return basename($path);
+        return Utils::basename($path);
     }
 
     /**
@@ -451,8 +456,12 @@ class SimpleStorage extends AbstractFilesystemStorage
         $content = (array) $file->content();
         if ($this->prefix) {
             $data = new Data($content);
-            $content = $data->get($this->prefix);
+            $content = $data->get($this->prefix, []);
         }
+
+        $file->free();
+        unset($file);
+
         $this->data = $content;
 
         $list = [];

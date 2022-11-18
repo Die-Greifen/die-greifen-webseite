@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Config
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -40,6 +40,9 @@ class Setup extends Data
      * @var string|null Current environment normalized to lower case.
      */
     public static $environment;
+
+    /** @var string */
+    public static $securityFile = 'config://security.yaml';
 
     /** @var array */
     protected $streams = [
@@ -164,6 +167,8 @@ class Setup extends Data
     public function __construct($container)
     {
         // Configure main streams.
+        $abs = str_starts_with(GRAV_SYSTEM_PATH, '/');
+        $this->streams['system']['prefixes'][''] = $abs ? ['system', GRAV_SYSTEM_PATH] : ['system'];
         $this->streams['user']['prefixes'][''] = [GRAV_USER_PATH];
         $this->streams['cache']['prefixes'][''] = [GRAV_CACHE_PATH];
         $this->streams['log']['prefixes'][''] = [GRAV_LOG_PATH];
@@ -177,13 +182,14 @@ class Setup extends Data
         // If no environment is set, make sure we get one (CLI or hostname).
         if (null === $environment) {
             if (defined('GRAV_CLI')) {
+                $request = null;
+                $uri = null;
                 $environment = 'cli';
             } else {
                 /** @var ServerRequestInterface $request */
                 $request = $container['request'];
-                $host = $request->getUri()->getHost();
-
-                $environment = Utils::substrToString($host, ':');
+                $uri = $request->getUri();
+                $environment = $uri->getHost();
             }
         }
 
@@ -197,16 +203,16 @@ class Setup extends Data
         if (null !== $setupFile) {
             // Make sure that the custom setup file exists. Terminates the script if not.
             if (!str_starts_with($setupFile, '/')) {
-                $setupFile = GRAV_ROOT . '/' . $setupFile;
+                $setupFile = GRAV_WEBROOT . '/' . $setupFile;
             }
             if (!is_file($setupFile)) {
                 echo 'GRAV_SETUP_PATH is defined but does not point to existing setup file.';
                 exit(1);
             }
         } else {
-            $setupFile = GRAV_ROOT . '/setup.php';
+            $setupFile = GRAV_WEBROOT . '/setup.php';
             if (!is_file($setupFile)) {
-                $setupFile = GRAV_ROOT . '/' . GRAV_USER_PATH . '/setup.php';
+                $setupFile = GRAV_WEBROOT . '/' . GRAV_USER_PATH . '/setup.php';
             }
             if (!is_file($setupFile)) {
                 $setupFile = null;
@@ -234,7 +240,7 @@ class Setup extends Data
                 $envPath .= '/';
             } else {
                 // Use default location. Start with Grav 1.7 default.
-                $envPath = GRAV_ROOT. '/' . GRAV_USER_PATH . '/env';
+                $envPath = GRAV_WEBROOT. '/' . GRAV_USER_PATH . '/env';
                 if (is_dir($envPath)) {
                     $envPath = 'user://env/';
                 } else {
@@ -257,7 +263,7 @@ class Setup extends Data
      */
     public function init()
     {
-        $locator = new UniformResourceLocator(GRAV_ROOT);
+        $locator = new UniformResourceLocator(GRAV_WEBROOT);
         $files = [];
 
         $guard = 5;
@@ -388,12 +394,19 @@ class Setup extends Data
 
             if (!$locator->findResource('environment://config', true)) {
                 // If environment does not have its own directory, remove it from the lookup.
-                $this->set('streams.schemes.environment.prefixes', ['config' => []]);
+                $prefixes = $this->get('streams.schemes.environment.prefixes');
+                $prefixes['config'] = [];
+
+                $this->set('streams.schemes.environment.prefixes', $prefixes);
                 $this->initializeLocator($locator);
             }
 
-            // Create security.yaml if it doesn't exist.
-            $filename = $locator->findResource('config://security.yaml', true, true);
+            // Create security.yaml salt if it doesn't exist into existing configuration environment if possible.
+            $securityFile = Utils::basename(static::$securityFile);
+            $securityFolder = substr(static::$securityFile, 0, -\strlen($securityFile));
+            $securityFolder = $locator->findResource($securityFolder, true) ?: $locator->findResource($securityFolder, true, true);
+            $filename = "{$securityFolder}/{$securityFile}";
+
             $security_file = CompiledYamlFile::instance($filename);
             $security_content = (array)$security_file->content();
 

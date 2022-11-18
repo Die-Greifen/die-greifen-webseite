@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Twig
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -47,6 +47,6 @@ class TwigNodeMarkdown extends Node implements NodeOutputInterface
             ->write('$lines = explode("\n", $content);' . PHP_EOL)
             ->write('$content = preg_replace(\'/^\' . $matches[0]. \'/\', "", $lines);' . PHP_EOL)
             ->write('$content = join("\n", $content);' . PHP_EOL)
-            ->write('echo $this->env->getExtension(\'Grav\Common\Twig\TwigExtension\')->markdownFunction($context, $content);' . PHP_EOL);
+            ->write('echo $this->env->getExtension(\'Grav\Common\Twig\Extension\GravExtension\')->markdownFunction($context, $content);' . PHP_EOL);
     }
 }

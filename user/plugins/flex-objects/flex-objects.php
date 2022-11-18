@@ -5,21 +5,30 @@ use Composer\Autoload\ClassLoader;
 use Grav\Common\Debugger;
 use Grav\Common\Grav;
 use Grav\Common\Page\Interfaces\PageInterface;
+use Grav\Common\Page\Pages;
 use Grav\Common\Page\Types;
 use Grav\Common\Plugin;
 use Grav\Common\User\Interfaces\UserInterface;
+use Grav\Common\Utils;
 use Grav\Events\FlexRegisterEvent;
 use Grav\Events\PermissionsRegisterEvent;
 use Grav\Events\PluginsLoadedEvent;
 use Grav\Framework\Acl\PermissionsReader;
 use Grav\Framework\Flex\FlexDirectory;
+use Grav\Framework\Flex\FlexForm;
+use Grav\Framework\Flex\Interfaces\FlexAuthorizeInterface;
 use Grav\Framework\Flex\Interfaces\FlexInterface;
+use Grav\Framework\Form\Interfaces\FormInterface;
+use Grav\Framework\Route\Route;
 use Grav\Plugin\Admin\Admin;
+use Grav\Plugin\FlexObjects\Controllers\ObjectController;
 use Grav\Plugin\FlexObjects\FlexFormFactory;
 use Grav\Plugin\Form\Forms;
 use Grav\Plugin\FlexObjects\Admin\AdminController;
 use Grav\Plugin\FlexObjects\Flex;
+use Psr\Http\Message\ServerRequestInterface;
 use RocketTheme\Toolbox\Event\Event;
+use function is_array;
 use function is_callable;
 
 /**
@@ -82,13 +91,35 @@ class FlexObjectsPlugin extends Plugin
             ],
             'onFormRegisterTypes' => [
                 ['onFormRegisterTypes', 0]
+            ]
+        ];
+    }
+
+    /**
+     * Get list of form field types specified in this plugin. Only special types needs to be listed.
+     *
+     * @return array
+     */
+    public function getFormFieldTypes()
+    {
+        return [
+            'list' => [
+                'array' => true
+            ],
+            'pagemedia' => [
+                'array' => true,
+                'media_field' => true,
+                'validate' => [
+                    'type' => 'ignore'
+                ]
+            ],
+            'filepicker' => [
+                'media_picker_field' => true
             ],
         ];
     }
 
     /**
-     * [PluginsLoadedEvent:100000] Composer autoload.
-     *
      * @return ClassLoader
      */
     public function autoload(): ClassLoader
@@ -103,7 +134,7 @@ class FlexObjectsPlugin extends Plugin
      */
     public function initializeFlex(): void
     {
-        $config = $this->config->get('plugins.flex-objects.directories');
+        $config = $this->config->get('plugins.flex-objects.directories') ?? [];
 
         // Add to DI container
         $this->grav['flex_objects'] = static function (Grav $grav) use ($config) {
@@ -126,7 +157,7 @@ class FlexObjectsPlugin extends Plugin
      */
     public function onPluginsInitialized(): void
     {
-        if ($this->isAdmin() && method_exists(Admin::class, 'getChangelog')) {
+        if ($this->isAdmin()) {
             /** @var UserInterface|null $user */
             $user = $this->grav['user'] ?? null;
 
@@ -153,6 +184,9 @@ class FlexObjectsPlugin extends Plugin
                 'onAdminControllerInit' => [
                     ['onAdminControllerInit', 0]
                 ],
+                'onThemeInitialized' => [
+                    ['onThemeInitialized', 0]
+                ],
                 'onPageInitialized' => [
                     ['onAdminPageInitialized', 0]
                 ],
@@ -163,13 +197,23 @@ class FlexObjectsPlugin extends Plugin
                     ['onGetPageTemplates', 0]
 
             ]);
-            /** @var AdminController controller */
-            $this->controller = new AdminController();
 
         } else {
             $this->enable([
                 'onTwigTemplatePaths' => [
                     ['onTwigTemplatePaths', 0]
+                ],
+                'onPagesInitialized' => [
+                    ['onPagesInitialized', -10000]
+                ],
+                'onPageInitialized' => [
+                    ['authorizePage', 10000]
+                ],
+                'onBeforeFlexFormInitialize' => [
+                    ['onBeforeFlexFormInitialize', -10]
+                ],
+                'onPageTask' => [
+                    ['onPageTask', -10]
                 ],
             ]);
         }
@@ -181,25 +225,297 @@ class FlexObjectsPlugin extends Plugin
      */
     public function onRegisterFlex(FlexRegisterEvent $event): void
     {
+        /** @var \Grav\Framework\Flex\Flex $flex */
         $flex = $event->flex;
-        $map = Flex::getLegacyBlueprintMap(false);
-
         $types = (array)$this->config->get('plugins.flex-objects.directories', []);
+        $this->registerDirectories($flex, $types);
+    }
+
+    /**
+     * @return void
+     */
+    public function onThemeInitialized(): void
+    {
+        // Register directories defined in the theme.
+        /** @var \Grav\Framework\Flex\Flex $flex */
+        $flex = $this->grav['flex'];
+        $types = (array)$this->config->get('plugins.flex-objects.directories', []);
+        $this->registerDirectories($flex, $types, true);
+
+        $this->controller = new AdminController();
+
+        /** @var Debugger $debugger */
+        $debugger = Grav::instance()['debugger'];
+        $names = implode(', ', array_keys($flex->getDirectories()));
+        $debugger->addMessage(sprintf('Registered flex types: %s', $names), 'debug');
+    }
+
+    /**
+     * @param Event $event
+     */
+    public function onBeforeFlexFormInitialize(Event $event): void
+    {
+        /** @var array $form */
+        $form = $event['form'];
+        $edit = $form['actions']['edit'] ?? false;
+        if (!isset($form['flex']['key']) && $edit === true) {
+            /** @var Route $route */
+            $route = $this->grav['route'];
+            $id = $route->getGravParam('id');
+            if (null !== $id) {
+                $form['flex']['key'] = $id;
+                $event['form'] = $form;
+            }
+        }
+    }
+
+    /**
+     * [onPagesInitialized:-10000] Default router for flex pages.
+     *
+     * @param Event $event
+     */
+    public function onPagesInitialized(Event $event): void
+    {
+        /** @var Route|null $route */
+        $route = $event['route'] ?? null;
+        if (null === $route) {
+            // Stop if in CLI.
+            return;
+        }
+
+        /** @var PageInterface|null $page */
+        $page = $this->grav['page'] ?? null;
+
+        $base = '';
+        $path = [];
+        if (!$page->routable() || $page->template() === 'notfound') {
+            /** @var Pages $pages */
+            $pages = $this->grav['pages'];
+
+            // Find first existing and routable parent page.
+            $parts = explode('/', $route->getRoute());
+            array_shift($parts);
+            $page = null;
+            while (!$page && $parts) {
+                $path[] = array_pop($parts);
+                $base = '/' . implode('/', $parts);
+                $page = $pages->find($base);
+                if ($page && !$page->routable()) {
+                    $page = null;
+                }
+            }
+        }
+
+        // If page is found, check if it contains flex directory router.
+        if ($page) {
+            $flex = $this->grav['flex'];
+            $options = $page->header()->flex ?? null;
+            $router = $options['router'] ?? null;
+            $type = $options['directory'] ?? null;
+            $directory = $type ? $flex->getDirectory($type) : null;
+            if (\is_string($router)) {
+                $path = implode('/', array_reverse($path));
+                $response = null;
+                $flexEvent = new Event([
+                    'flex' => $flex,
+                    'directory' => $directory,
+                    'parent' => $page,
+                    'page' => $page,
+                    'base' => $base,
+                    'path' => $path,
+                    'route' => $route,
+                    'options' => $options,
+                    'request' => $event['request'],
+                    'response' => &$response,
+                ]);
+                $flexEvent = $this->grav->fireEvent("flex.router.{$router}", $flexEvent);
+                if ($response) {
+                    $this->grav->close($response);
+                }
+
+                /** @var PageInterface|null $routedPage */
+                $routedPage = $flexEvent['page'];
+                if ($routedPage) {
+                    /** @var Debugger $debugger */
+                    $debugger = Grav::instance()['debugger'];
+                    $debugger->addMessage(sprintf('Flex uses page %s', $routedPage->route()));
+
+                    unset($this->grav['page']);
+                    $this->grav['page'] = $routedPage;
+                    $event->stopPropagation();
+                }
+            }
+        }
+    }
+
+    /**
+     * [onPageInitialized:10000] Authorize Flex Objects Page
+     *
+     * @param Event $event
+     */
+    public function authorizePage(Event $event): void
+    {
+        /** @var PageInterface|null $page */
+        $page = $event['page'];
+        if (!$page instanceof PageInterface) {
+            return;
+        }
+
+        $header = $page->header();
+        $forms = $page->getForms();
+
+        // Update dynamic flex forms from the page.
+        $form = null;
+        foreach ($forms as $name => $test) {
+            $type = $form['type'] ?? null;
+            if ($type === 'flex') {
+                $form = $test;
+
+                // Update the form and add it back to the page.
+                $this->grav->fireEvent('onBeforeFlexFormInitialize', new Event(['page' => $page, 'name' => $name, 'form' => &$form]));
+                $page->addForms([$form], true);
+            }
+        }
+
+        // Make sure the page contains flex.
+        $config = $header->flex ?? null;
+        if (!is_array($config) && !$form) {
+            return;
+        }
+
+        /** @var Route $route */
+        $route = $this->grav['route'];
+
+        $type = $form['flex']['type'] ?? $config['directory'] ?? $route->getGravParam('directory') ?? null;
+        $key = $form['flex']['key'] ?? $config['id'] ?? $route->getGravParam('id') ?? '';
+        if (\is_string($type)) {
+            /** @var Flex $flex */
+            $flex = $this->grav['flex_objects'];
+            $directory = $flex->getDirectory($type);
+        } else {
+            $directory = null;
+        }
+
+        if (!$directory) {
+            return;
+        }
+
+        $create = (bool)($form['actions']['create'] ?? false);
+        $edit = (bool)($form['actions']['edit'] ?? false);
+
+        $scope = $config['access']['scope'] ?? null;
+
+        $object = $key !== '' ? $directory->getObject($key) : null;
+        $hasAccess = null;
+
+        $action = $config['access']['action'] ?? null;
+        if (null === $action) {
+            if (!$form) {
+                $action = $key !== '' ? 'read' : 'list';
+                if (null === $scope) {
+                    $hasAccess = true;
+                }
+            } elseif ($object) {
+                if ($edit) {
+                    $scope = $scope ?? 'admin';
+                    $action = 'update';
+                } else {
+                    $hasAccess = false;
+                }
+            } elseif ($create) {
+                $object = $directory->createObject([], $key);
+                $scope = $scope ?? 'admin';
+                $action = 'create';
+            } else {
+                $hasAccess = false;
+            }
+        }
+
+        if ($action && $hasAccess === null) {
+            if ($object instanceof FlexAuthorizeInterface) {
+                $hasAccess = $object->isAuthorized($action, $scope);
+            } else {
+                $hasAccess = $directory->isAuthorized($action, $scope);
+            }
+        }
+
+        if (!$hasAccess) {
+            // Hide the page (404).
+            $page->routable(false);
+            $page->visible(false);
+
+            // If page is not a module, replace the current page with unauthorized page.
+            if (!$page->isModule()) {
+                $login = $this->grav['login'] ?? null;
+                $unauthorized = $login ? $login->addPage('unauthorized') : null;
+                if ($unauthorized) {
+                    unset($this->grav['page']);
+                    $this->grav['page'] = $unauthorized;
+                }
+            }
+        } elseif ($config['access']['override'] ?? false) {
+            // Override page access settings (allow).
+            $page->modifyHeader('access', []);
+        }
+    }
+
+    /**
+     * @param Event $event
+     */
+    public function onPageTask(Event $event): void
+    {
+        /** @var FormInterface|null $form */
+        $form = $event['form'] ?? null;
+        if (!$form instanceof FlexForm) {
+            return;
+        }
+
+        $object = $form->getObject();
+
+        /** @var ServerRequestInterface $request */
+        $request = $event['request'];
+        $request = $request
+            ->withAttribute('type', $object->getFlexType())
+            ->withAttribute('key', $object->getKey())
+            ->withAttribute('object', $object)
+            ->withAttribute('form', $form);
+
+        $controller = new ObjectController();
+
+        $response = $controller->handle($request);
+        if ($response->getStatusCode() !== 418) {
+            $this->grav->close($response);
+        }
+    }
+
+    /**
+     * @param \Grav\Framework\Flex\Flex $flex
+     * @param array $types
+     * @param bool $report
+     */
+    protected function registerDirectories(\Grav\Framework\Flex\Flex $flex, array $types, bool $report = false): void
+    {
+        $map = Flex::getLegacyBlueprintMap(false);
         foreach ($types as $blueprint) {
             // Backwards compatibility to v1.0.0-rc.3
             $blueprint = $map[$blueprint] ?? $blueprint;
-            $type = basename((string)$blueprint, '.yaml');
+            $type = Utils::basename((string)$blueprint, '.yaml');
+            if (!$type) {
+                continue;
+            }
 
             if (!file_exists($blueprint)) {
-                /** @var Debugger $debugger */
-                $debugger = Grav::instance()['debugger'];
-                $debugger->addMessage(sprintf('Flex: blueprint for flex type %s is missing', $type), 'error');
+                if ($report) {
+                    /** @var Debugger $debugger */
+                    $debugger = Grav::instance()['debugger'];
+                    $debugger->addMessage(sprintf('Flex: blueprint for flex type %s is missing', $type), 'error');
+                }
 
                 continue;
             }
 
             $directory = $flex->getDirectory($type);
-            if ($type && (!$directory || !$directory->isEnabled())) {
+            if (!$directory || !$directory->isEnabled()) {
                 $flex->addDirectoryType($type, $blueprint);
             }
         }

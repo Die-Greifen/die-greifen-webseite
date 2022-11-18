@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Data
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -27,7 +27,6 @@ use function is_bool;
 use function is_float;
 use function is_int;
 use function is_string;
-use function strlen;
 
 /**
  * Class Validation
@@ -239,20 +238,27 @@ class Validation
             $value = trim($value);
         }
 
-        if (isset($params['min']) && strlen($value) < $params['min']) {
+        $value = preg_replace("/\r\n|\r/um", "\n", $value);
+        $len = mb_strlen($value);
+
+        $min = (int)($params['min'] ?? 0);
+        if ($min && $len < $min) {
             return false;
         }
 
-        if (isset($params['max']) && strlen($value) > $params['max']) {
+        $multiline = isset($params['multiline']) && $params['multiline'];
+
+        $max = (int)($params['max'] ?? ($multiline ? 65536 : 2048));
+        if ($max && $len > $max) {
             return false;
         }
 
-        $min = $params['min'] ?? 0;
-        if (isset($params['step']) && (strlen($value) - $min) % $params['step'] === 0) {
+        $step = (int)($params['step'] ?? 0);
+        if ($step && ($len - $min) % $step === 0) {
             return false;
         }
 
-        if ((!isset($params['multiline']) || !$params['multiline']) && preg_match('/\R/um', $value)) {
+        if (!$multiline && preg_match('/\R/um', $value)) {
             return false;
         }
 
@@ -271,11 +277,13 @@ class Validation
             return '';
         }
 
+        $value = (string)$value;
+
         if (!empty($params['trim'])) {
             $value = trim($value);
         }
 
-        return (string) $value;
+        return preg_replace("/\r\n|\r/um", "\n", $value);
     }
 
     /**
@@ -311,6 +319,10 @@ class Validation
      */
     public static function typeCommaList($value, array $params, array $field)
     {
+        if (!isset($params['max'])) {
+            $params['max'] = 2048;
+        }
+
         return is_array($value) ? true : self::typeText($value, $params, $field);
     }
 
@@ -332,7 +344,7 @@ class Validation
      */
     protected static function filterLower($value, array $params)
     {
-        return strtolower($value);
+        return mb_strtolower($value);
     }
 
     /**
@@ -342,7 +354,7 @@ class Validation
      */
     protected static function filterUpper($value, array $params)
     {
-        return strtoupper($value);
+        return mb_strtoupper($value);
     }
 
 
@@ -373,6 +385,10 @@ class Validation
      */
     public static function typePassword($value, array $params, array $field)
     {
+        if (!isset($params['max'])) {
+            $params['max'] = 256;
+        }
+
         return self::typeText($value, $params, $field);
     }
 
@@ -513,17 +529,32 @@ class Validation
             return false;
         }
 
-        if (isset($params['min']) && $value < $params['min']) {
-            return false;
+        $value = (float)$value;
+
+        $min = 0;
+        if (isset($params['min'])) {
+            $min = (float)$params['min'];
+            if ($value < $min) {
+                return false;
+            }
         }
 
-        if (isset($params['max']) && $value > $params['max']) {
-            return false;
+        if (isset($params['max'])) {
+            $max = (float)$params['max'];
+            if ($value > $max) {
+                return false;
+            }
         }
 
-        $min = $params['min'] ?? 0;
+        if (isset($params['step'])) {
+            $step = (float)$params['step'];
+            // Count of how many steps we are above/below the minimum value.
+            $pos = ($value - $min) / $step;
 
-        return !(isset($params['step']) && fmod($value - $min, $params['step']) === 0);
+            return is_int(static::filterNumber($pos, $params, $field));
+        }
+
+        return true;
     }
 
     /**
@@ -534,7 +565,7 @@ class Validation
      */
     protected static function filterNumber($value, array $params, array $field)
     {
-        return (string)(int)$value !== (string)(float)$value ? (float) $value : (int) $value;
+        return (string)(int)$value !== (string)(float)$value ? (float)$value : (int)$value;
     }
 
     /**
@@ -587,7 +618,7 @@ class Validation
      */
     public static function typeColor($value, array $params, array $field)
     {
-        return preg_match('/^\#[0-9a-fA-F]{3}[0-9a-fA-F]{3}?$/u', $value);
+        return (bool)preg_match('/^\#[0-9a-fA-F]{3}[0-9a-fA-F]{3}?$/u', $value);
     }
 
     /**
@@ -600,6 +631,10 @@ class Validation
      */
     public static function typeEmail($value, array $params, array $field)
     {
+        if (!isset($params['max'])) {
+            $params['max'] = 320;
+        }
+
         $values = !is_array($value) ? explode(',', preg_replace('/\s+/', '', $value)) : $value;
 
         foreach ($values as $val) {
@@ -621,6 +656,10 @@ class Validation
      */
     public static function typeUrl($value, array $params, array $field)
     {
+        if (!isset($params['max'])) {
+            $params['max'] = 2048;
+        }
+
         return self::typeText($value, $params, $field) && filter_var($value, FILTER_VALIDATE_URL);
     }
 
@@ -760,14 +799,22 @@ class Validation
         }
 
         // If creating new values is allowed, no further checks are needed.
-        if (!empty($field['selectize']['create'])) {
+        $validateOptions = $field['validate']['options'] ?? null;
+        if (!empty($field['selectize']['create']) || $validateOptions === 'ignore') {
             return true;
         }
 
         $options = $field['options'] ?? [];
         $use = $field['use'] ?? 'values';
 
-        if (empty($field['selectize']) || empty($field['multiple'])) {
+        if ($validateOptions) {
+            // Use custom options structure.
+            foreach ($options as &$option) {
+                $option = $option[$validateOptions] ?? null;
+            }
+            unset($option);
+            $options = array_values($options);
+        } elseif (empty($field['selectize']) || empty($field['multiple'])) {
             $options = array_keys($options);
         }
         if ($use === 'keys') {
@@ -787,7 +834,7 @@ class Validation
     {
         $value = static::filterArray($value, $params, $field);
 
-        return Utils::arrayUnflattenDotNotation($value);
+        return is_array($value) ? Utils::arrayUnflattenDotNotation($value) : null;
     }
 
     /**
@@ -1117,6 +1164,21 @@ class Validation
     }
 
     /**
+     * Custom input: int
+     *
+     * @param  mixed  $value   Value to be validated.
+     * @param  array  $params  Validation parameters.
+     * @param  array  $field   Blueprint for the field.
+     * @return bool   True if validation succeeded.
+     */
+    public static function typeInt($value, array $params, array $field)
+    {
+        $params['step'] = max(1, (int)($params['step'] ?? 0));
+
+        return self::typeNumber($value, $params, $field);
+    }
+
+    /**
      * @param mixed $value
      * @param mixed $params
      * @return bool
@@ -1153,7 +1215,7 @@ class Validation
      */
     public static function filterItem_List($value, $params)
     {
-        return array_values(array_filter($value, function ($v) {
+        return array_values(array_filter($value, static function ($v) {
             return !empty($v);
         }));
     }

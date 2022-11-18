@@ -3,13 +3,15 @@
 /**
  * @package    Grav\Common\Page
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
 namespace Grav\Common\Page\Interfaces;
 
+use Grav\Common\Data\Blueprint;
 use Grav\Common\Media\Interfaces\MediaCollectionInterface;
+use Grav\Common\Page\Header;
 
 /**
  * Methods currently implemented in Flex Page emulation layer.
@@ -20,7 +22,7 @@ interface PageContentInterface
      * Gets and Sets the header based on the YAML configuration at the top of the .md file
      *
      * @param  object|array|null $var a YAML object representing the configuration for the file
-     * @return object      the current YAML configuration
+     * @return \stdClass|Header      The current YAML configuration
      */
     public function header($var = null);
 
@@ -58,7 +60,7 @@ interface PageContentInterface
     /**
      * Needed by the onPageContentProcessed event to set the raw page content
      *
-     * @param string $content
+     * @param string|null $content
      */
     public function setRawContent($content);
 
@@ -254,4 +256,12 @@ interface PageContentInterface
      * @return bool
      */
     public function exists();
+
+    /**
+     * Returns the blueprint from the page.
+     *
+     * @param string $name Name of the Blueprint form. Used by flex only.
+     * @return Blueprint Returns a Blueprint.
+     */
+    public function getBlueprint(string $name = '');
 }

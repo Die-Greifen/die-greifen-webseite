@@ -83,8 +83,16 @@ const ACCEPT_FUNC = function(file, done, settings) {
     const hasMax = (resolution.max && (resolution.max.width || resolution.max.height));
     if (hasMin || (!(settings.resizeWidth || settings.resizeHeight) && hasMax)) {
         reader.onload = function(event) {
+            if (!/image\//.test(file.type)) {
+              done();
+              return;
+            }
+
             const image = new Image();
             image.src = event.target.result;
+            image.onerror = function() {
+                done(translations.PLUGIN_ADMIN.FILE_ERROR_UPLOAD);
+            };
             image.onload = function() {
                 if (resolution.min) {
                     Object.keys(resolution.min).forEach((attr) => {
@@ -104,6 +112,7 @@ const ACCEPT_FUNC = function(file, done, settings) {
                     }
                 }
 
+                URL.revokeObjectURL(image.src); // release memory
                 return error ? done(error) : done();
             };
         };
@@ -135,6 +144,7 @@ export default class FilesField {
         this.dropzone = new Dropzone(container, this.options);
         this.dropzone.on('complete', this.onDropzoneComplete.bind(this));
         this.dropzone.on('success', this.onDropzoneSuccess.bind(this));
+        this.dropzone.on('addedfile', this.onDropzoneAddedFile.bind(this));
         this.dropzone.on('removedfile', this.onDropzoneRemovedFile.bind(this));
         this.dropzone.on('sending', this.onDropzoneSending.bind(this));
         this.dropzone.on('error', this.onDropzoneError.bind(this));
@@ -220,7 +230,7 @@ export default class FilesField {
             file,
             data: response,
             mode: 'removeFile',
-            msg: `<p>${translations.PLUGIN_ADMIN.FILE_ERROR_UPLOAD} <strong>${file.name}</strong></p>
+            msg: `<p>${translations.PLUGIN_ADMIN.FILE_ERROR_UPLOAD} <strong>{{fileName}}</strong></p>
             <pre>${response.message}</pre>`
         });
     }
@@ -236,7 +246,7 @@ export default class FilesField {
                 file,
                 data,
                 mode: 'removeFile',
-                msg: `<p>${translations.PLUGIN_ADMIN.FILE_ERROR_ADD} <strong>${file.name}</strong></p>
+                msg: `<p>${translations.PLUGIN_ADMIN.FILE_ERROR_ADD} <strong>{{fileName}}</strong></p>
                 <pre>${data.message}</pre>`
             });
         }
@@ -249,6 +259,10 @@ export default class FilesField {
     b64_to_utf8(str) {
         str = str.replace(/\s/g, '');
         return decodeURIComponent(escape(window.atob(str)));
+    }
+
+    onDropzoneAddedFile(file, ...extra) {
+      return this.dropzone.options.addedfile(file);
     }
 
     onDropzoneRemovedFile(file, ...extra) {
@@ -321,7 +335,9 @@ export default class FilesField {
         }
 
         let modal = $('[data-remodal-id="generic"]');
-        modal.find('.error-content').html(msg);
+        const cleanName = file.name.replace('<', '&lt;').replace('>', '&gt;');
+
+        modal.find('.error-content').html(msg.replace('{{fileName}}', cleanName));
         $.remodal.lookup[modal.data('remodal')].open();
     }
 }
@@ -331,7 +347,9 @@ export function UriToMarkdown(uri) {
     uri = uri.replace(/\(/g, '%28');
     uri = uri.replace(/\)/g, '%29');
 
-    return uri.match(/\.(jpe?g|png|gif|svg|mp4|webm|ogv|mov)$/i) ? `![](${uri})` : `[${decodeURI(uri)}](${uri})`;
+    const title = uri.split('.').slice(0, -1).join('.');
+
+    return uri.match(/\.(jpe?g|png|gif|svg|webp|mp4|webm|ogv|mov)$/i) ? `![${title}](${uri} "${title}")` : `[${decodeURI(uri)}](${uri})`;
 }
 
 let instances = [];
@@ -367,6 +385,7 @@ const addNode = (container) => {
         resizeWidth: settings.resizeWidth || null,
         resizeHeight: settings.resizeHeight || null,
         resizeQuality: settings.resizeQuality || null,
+        resolution: settings.resolution || null,
         accept: function(file, done) { ACCEPT_FUNC(file, done, settings); }
     };
 

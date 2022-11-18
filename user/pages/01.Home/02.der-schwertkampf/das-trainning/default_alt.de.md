@@ -1,12 +1,12 @@
 ---
-title: 'Das Trainning'
+title: 'Das Training'
 visible: true
 ---
 
 ## Termine und Dauer des Trainings
 
-Wir trainieren  jeden Donnerstag, jeweils von 19:00 bis 21:00 Uhr in Berlin - Neukölln unsere Fähigkeiten am Schwert.  Bei Interesse könnt Ihr euch gern unser Training einmal anschauen und ggf. auch einen "Schnuppermonat"  mit uns verbringen.
-Da eine Anmeldung für die Trainingsteilnahme im Rahmen der Planung notwendig ist, erfragt bitte über das Kontaktformular den genauen Ort.
+Wir trainieren jeden Donnerstag, jeweils von 19:00 bis 21:00 Uhr in einer Schulturnhalle nahe Hermannplatz. Bei Interesse könnt Ihr euch gern unser Training einmal anschauen und ggf. auch einen "Schnuppermonat"  mit uns verbringen.
+Schreibt uns an, wenn ihr Interesse habt am Training teilzunehmen, dann verraten wir euch auch den genauen Ort. :)
 
  
 

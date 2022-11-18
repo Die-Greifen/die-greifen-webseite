@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Assets\Traits
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -62,15 +62,13 @@ trait AssetUtilsTrait
      * Download and concatenate the content of several links.
      *
      * @param  array $assets
-     * @param  bool $css
+     * @param  int $type
      * @return string
      */
-    protected function gatherLinks(array $assets, $css = true)
+    protected function gatherLinks(array $assets, int $type = self::CSS_ASSET): string
     {
         $buffer = '';
-
-
-        foreach ($assets as $id => $asset) {
+        foreach ($assets as $asset) {
             $local = true;
 
             $link = $asset->getAsset();
@@ -90,7 +88,7 @@ trait AssetUtilsTrait
                 }
 
                 $relative_dir = dirname($relative_path);
-                $link = ROOT_DIR . $relative_path;
+                $link = GRAV_ROOT . '/' . $relative_path;
             }
 
             // TODO: looks like this is not being used.
@@ -102,13 +100,17 @@ trait AssetUtilsTrait
             }
 
             // Double check last character being
-            if (!$css) {
+            if ($type === self::JS_ASSET || $type === self::JS_MODULE_ASSET) {
                 $file = rtrim($file, ' ;') . ';';
             }
 
             // If this is CSS + the file is local + rewrite enabled
-            if ($css && $this->css_rewrite) {
+            if ($type === self::CSS_ASSET && $this->css_rewrite) {
                 $file = $this->cssRewrite($file, $relative_dir, $local);
+            }
+
+            if ($type === self::JS_MODULE_ASSET) {
+                $file = $this->jsRewrite($file, $relative_dir, $local);
             }
 
             $file = rtrim($file) . PHP_EOL;
@@ -116,7 +118,7 @@ trait AssetUtilsTrait
         }
 
         // Pull out @imports and move to top
-        if ($css) {
+        if ($type === self::CSS_ASSET) {
             $buffer = $this->moveImports($buffer);
         }
 
@@ -135,7 +137,7 @@ trait AssetUtilsTrait
 
         $imports = [];
 
-        $file = (string)preg_replace_callback($regex, function ($matches) use (&$imports) {
+        $file = (string)preg_replace_callback($regex, static function ($matches) use (&$imports) {
             $imports[] = $matches[0];
 
             return '';
@@ -156,6 +158,10 @@ trait AssetUtilsTrait
         $no_key = ['loading'];
 
         foreach ($this->attributes as $key => $value) {
+            if ($value === null) {
+                continue;
+            }
+
             if (is_numeric($key)) {
                 $key = $value;
             }
@@ -196,7 +202,7 @@ trait AssetUtilsTrait
         }
 
         if ($this->timestamp) {
-            if (Utils::contains($asset, '?') || $querystring) {
+            if ($querystring || Utils::contains($asset, '?')) {
                 $querystring .=  '&' . $this->timestamp;
             } else {
                 $querystring .= '?' . $this->timestamp;

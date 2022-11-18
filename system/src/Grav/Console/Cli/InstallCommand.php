@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Console\Cli
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -73,11 +73,11 @@ class InstallCommand extends GravCommand
         $io = $this->getIO();
 
         $dependencies_file = '.dependencies';
-        $this->destination = $input->getArgument('destination') ?: GRAV_ROOT;
+        $this->destination = $input->getArgument('destination') ?: GRAV_WEBROOT;
 
         // fix trailing slash
         $this->destination = rtrim($this->destination, DS) . DS;
-        $this->user_path = $this->destination . USER_PATH;
+        $this->user_path = $this->destination . GRAV_USER_PATH . DS;
         if ($local_config_file = $this->loadLocalConfig()) {
             $io->writeln('Read local config from <cyan>' . $local_config_file . '</cyan>');
         }
@@ -147,7 +147,7 @@ class InstallCommand extends GravCommand
         foreach ($this->config['git'] as $repo => $data) {
             $path = $this->destination . DS . $data['path'];
             if (!file_exists($path)) {
-                exec('cd "' . $this->destination . '" && git clone -b ' . $data['branch'] . ' --depth 1 ' . $data['url'] . ' ' . $data['path'], $output, $return);
+                exec('cd ' . escapeshellarg($this->destination) . ' && git clone -b ' . $data['branch'] . ' --depth 1 ' . $data['url'] . ' ' . $data['path'], $output, $return);
 
                 if (!$return) {
                     $io->writeln('<green>SUCCESS</green> cloned <magenta>' . $data['url'] . '</magenta> -> <cyan>' . $path . '</cyan>');

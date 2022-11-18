@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Console\Cli
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -102,11 +102,10 @@ class CleanCommand extends Command
         'vendor/dragonmantank/cron-expression/composer.json',
         'vendor/dragonmantank/cron-expression/tests',
         'vendor/dragonmantank/cron-expression/CHANGELOG.md',
-        'vendor/enshrined/svg-sanitize/tests',
-        'vendor/enshrined/svg-sanitize/.gitignore',
-        'vendor/enshrined/svg-sanitize/.travis.yml',
-        'vendor/enshrined/svg-sanitize/composer.json',
-        'vendor/enshrined/svg-sanitize/phpunit.xml',
+        'vendor/rhukster/dom-sanitizer/tests',
+        'vendor/rhukster/dom-sanitizer/.gitignore',
+        'vendor/rhukster/dom-sanitizer/composer.json',
+        'vendor/rhukster/dom-sanitizer/composer.lock',
         'vendor/erusev/parsedown/composer.json',
         'vendor/erusev/parsedown/phpunit.xml.dist',
         'vendor/erusev/parsedown/.travis.yml',
@@ -154,8 +153,6 @@ class CleanCommand extends Command
         'vendor/itsgoingd/clockwork/.gitattributes',
         'vendor/itsgoingd/clockwork/CHANGELOG.md',
         'vendor/itsgoingd/clockwork/composer.json',
-        'vendor/kodus/psr7-server/composer.json',
-        'vendor/kodus/psr7-server/CHANGELOG.md',
         'vendor/league/climate/composer.json',
         'vendor/league/climate/CHANGELOG.md',
         'vendor/league/climate/CONTRIBUTING.md',
@@ -197,6 +194,9 @@ class CleanCommand extends Command
         'vendor/nyholm/psr7/phpstan.neon.dist',
         'vendor/nyholm/psr7/CHANGELOG.md',
         'vendor/nyholm/psr7/psalm.xml',
+        'vendor/nyholm/psr7-server/.github',
+        'vendor/nyholm/psr7-server/composer.json',
+        'vendor/nyholm/psr7-server/CHANGELOG.md',
         'vendor/phive/twig-extensions-deferred/.gitignore',
         'vendor/phive/twig-extensions-deferred/.travis.yml',
         'vendor/phive/twig-extensions-deferred/composer.json',

@@ -25,9 +25,12 @@ class ClockworkServiceProvider extends ServiceProvider
 	public function boot()
 	{
 		if ($this->app['clockwork.support']->isCollectingData()) {
-			$this->app['clockwork.support']->addDataSources()->listenToEvents();
+			$this->registerEventListeners();
 			$this->registerMiddleware();
 		}
+
+		$this->app['clockwork.support']->handleArtisanEvents();
+		$this->app['clockwork.support']->handleOctaneEvents();
 
 		// If Clockwork is disabled, return before registering middleware or routes
 		if (! $this->app['clockwork.support']->isEnabled()) return;
@@ -108,7 +111,8 @@ class ClockworkServiceProvider extends ServiceProvider
 		$this->app->singleton('clockwork.cache', function ($app) {
 			return (new LaravelCacheDataSource(
 				$app['events'],
-				$app['clockwork.support']->getConfig('features.cache.collect_queries')
+				$app['clockwork.support']->getConfig('features.cache.collect_queries'),
+				$app['clockwork.support']->getConfig('features.cache.collect_values')
 			));
 		});
 
@@ -154,7 +158,8 @@ class ClockworkServiceProvider extends ServiceProvider
 			return (new LaravelDataSource(
 				$app,
 				$app['clockwork.support']->isFeatureEnabled('log'),
-				$app['clockwork.support']->isFeatureEnabled('routes')
+				$app['clockwork.support']->isFeatureEnabled('routes'),
+				$app['clockwork.support']->getConfig('features.routes.only_namespaces', [])
 			));
 		});
 
@@ -224,11 +229,22 @@ class ClockworkServiceProvider extends ServiceProvider
 		$this->app->alias('clockwork.xdebug', XdebugDataSource::class);
 	}
 
+	// Register event listeners
+	protected function registerEventListeners()
+	{
+		$this->app->booted(function () {
+			$this->app['clockwork.support']->addDataSources()->listenToEvents();
+		});
+	}
+
 	// Register middleware
 	protected function registerMiddleware()
 	{
-		$this->app[\Illuminate\Contracts\Http\Kernel::class]
-			->prependMiddleware(ClockworkMiddleware::class);
+		$kernel = $this->app[\Illuminate\Contracts\Http\Kernel::class];
+
+		if (method_exists($kernel, 'hasMiddleware') && $kernel->hasMiddleware(ClockworkMiddleware::class)) return;
+
+		$kernel->prependMiddleware(ClockworkMiddleware::class);
 	}
 
 	protected function registerRoutes()

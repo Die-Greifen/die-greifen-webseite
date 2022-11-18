@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * @package    Grav\Framework\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -40,6 +40,8 @@ class FolderStorage extends AbstractFilesystemStorage
     protected $dataFolder;
     /** @var string Pattern to access an object. */
     protected $dataPattern = '{FOLDER}/{KEY}/{FILE}{EXT}';
+    /** @var string[] */
+    protected $variables = ['FOLDER' => '%1$s', 'KEY' => '%2$s', 'KEY:2' => '%3$s', 'FILE' => '%4$s', 'EXT' => '%5$s'];
     /** @var string Filename for the object. */
     protected $dataFile;
     /** @var string File extension for the object. */
@@ -222,6 +224,7 @@ class FolderStorage extends AbstractFilesystemStorage
      * @param string $src
      * @param string $dst
      * @return bool
+     * @throws RuntimeException
      */
     public function copyRow(string $src, string $dst): bool
     {
@@ -242,10 +245,10 @@ class FolderStorage extends AbstractFilesystemStorage
         return $this->copyFolder($srcPath, $dstPath);
     }
 
-
     /**
      * {@inheritdoc}
      * @see FlexStorageInterface::renameRow()
+     * @throws RuntimeException
      */
     public function renameRow(string $src, string $dst): bool
     {
@@ -349,7 +352,7 @@ class FolderStorage extends AbstractFilesystemStorage
      */
     protected function getKeyFromPath(string $path): string
     {
-        return basename($path);
+        return Utils::basename($path);
     }
 
     /**
@@ -360,7 +363,12 @@ class FolderStorage extends AbstractFilesystemStorage
      */
     protected function prepareRow(array &$row): void
     {
-        unset($row[$this->keyField]);
+        if (array_key_exists($this->keyField, $row)) {
+            $key = $row[$this->keyField];
+            if ($key === $this->normalizeKey($key)) {
+                unset($row[$this->keyField]);
+            }
+        }
     }
 
     /**
@@ -373,12 +381,20 @@ class FolderStorage extends AbstractFilesystemStorage
         $file = $this->getFile($path);
         try {
             $data = (array)$file->content();
-            $file->free();
             if (isset($data[0])) {
                 throw new RuntimeException('Broken object file');
             }
+
+            // Add key field to the object.
+            $keyField = $this->keyField;
+            if ($keyField !== 'storage_key' && !isset($data[$keyField])) {
+                $data[$keyField] = $key;
+            }
         } catch (RuntimeException $e) {
             $data = ['__ERROR' => $e->getMessage()];
+        } finally {
+            $file->free();
+            unset($file);
         }
 
         $data['__META'] = $this->getObjectMeta($key);
@@ -401,6 +417,8 @@ class FolderStorage extends AbstractFilesystemStorage
                 $key = $this->getNewKey();
             }
 
+            $key = $this->normalizeKey($key);
+
             // Check if the row already exists and if the key has been changed.
             $oldKey = $row['__META']['storage_key'] ?? null;
             if (is_string($oldKey) && $oldKey !== $key) {
@@ -420,13 +438,17 @@ class FolderStorage extends AbstractFilesystemStorage
 
             $file->save($row);
 
-            /** @var UniformResourceLocator $locator */
-            $locator = Grav::instance()['locator'];
-            if ($locator->isStream($path)) {
-                $locator->clearCache();
-            }
         } catch (RuntimeException $e) {
             throw new RuntimeException(sprintf('Flex saveFile(%s): %s', $path ?? $key, $e->getMessage()));
+        } finally {
+            /** @var UniformResourceLocator $locator */
+            $locator = Grav::instance()['locator'];
+            $locator->clearCache();
+
+            if (isset($file)) {
+                $file->free();
+                unset($file);
+            }
         }
 
         $row['__META'] = $this->getObjectMeta($key, true);
@@ -446,14 +468,14 @@ class FolderStorage extends AbstractFilesystemStorage
             if ($file->exists()) {
                 $file->delete();
             }
-
-            /** @var UniformResourceLocator $locator */
-            $locator = Grav::instance()['locator'];
-            if ($locator->isStream($filename)) {
-                $locator->clearCache($filename);
-            }
         } catch (RuntimeException $e) {
             throw new RuntimeException(sprintf('Flex deleteFile(%s): %s', $filename, $e->getMessage()));
+        } finally {
+            /** @var UniformResourceLocator $locator */
+            $locator = Grav::instance()['locator'];
+            $locator->clearCache();
+
+            $file->free();
         }
 
         return $data;
@@ -468,14 +490,12 @@ class FolderStorage extends AbstractFilesystemStorage
     {
         try {
             Folder::copy($this->resolvePath($src), $this->resolvePath($dst));
-
-            /** @var UniformResourceLocator $locator */
-            $locator = Grav::instance()['locator'];
-            if ($locator->isStream($src) || $locator->isStream($dst)) {
-                $locator->clearCache();
-            }
         } catch (RuntimeException $e) {
             throw new RuntimeException(sprintf('Flex copyFolder(%s, %s): %s', $src, $dst, $e->getMessage()));
+        } finally {
+            /** @var UniformResourceLocator $locator */
+            $locator = Grav::instance()['locator'];
+            $locator->clearCache();
         }
 
         return true;
@@ -490,14 +510,12 @@ class FolderStorage extends AbstractFilesystemStorage
     {
         try {
             Folder::move($this->resolvePath($src), $this->resolvePath($dst));
-
-            /** @var UniformResourceLocator $locator */
-            $locator = Grav::instance()['locator'];
-            if ($locator->isStream($src) || $locator->isStream($dst)) {
-                $locator->clearCache();
-            }
         } catch (RuntimeException $e) {
             throw new RuntimeException(sprintf('Flex moveFolder(%s, %s): %s', $src, $dst, $e->getMessage()));
+        } finally {
+            /** @var UniformResourceLocator $locator */
+            $locator = Grav::instance()['locator'];
+            $locator->clearCache();
         }
 
         return true;
@@ -511,17 +529,13 @@ class FolderStorage extends AbstractFilesystemStorage
     protected function deleteFolder(string $path, bool $include_target = false): bool
     {
         try {
-            $success = Folder::delete($this->resolvePath($path), $include_target);
-
-            /** @var UniformResourceLocator $locator */
-            $locator = Grav::instance()['locator'];
-            if ($locator->isStream($path)) {
-                $locator->clearCache();
-            }
-
-            return $success;
+            return Folder::delete($this->resolvePath($path), $include_target);
         } catch (RuntimeException $e) {
             throw new RuntimeException(sprintf('Flex deleteFolder(%s): %s', $path, $e->getMessage()));
+        } finally {
+            /** @var UniformResourceLocator $locator */
+            $locator = Grav::instance()['locator'];
+            $locator->clearCache();
         }
     }
 
@@ -622,7 +636,7 @@ class FolderStorage extends AbstractFilesystemStorage
         $flags = FilesystemIterator::KEY_AS_PATHNAME | FilesystemIterator::CURRENT_AS_FILEINFO | FilesystemIterator::SKIP_DOTS | FilesystemIterator::UNIX_PATHS;
 
         $iterator = new FilesystemIterator($path, $flags);
-        $list = [];
+        $list = [[]];
         /** @var SplFileInfo $info */
         foreach ($iterator as $filename => $info) {
             if (!$info->isDir() || strpos($info->getFilename(), '.') === 0) {
@@ -632,11 +646,7 @@ class FolderStorage extends AbstractFilesystemStorage
             $list[] = $this->buildIndexFromFilesystem($filename);
         }
 
-        if (!$list) {
-            return [];
-        }
-
-        return count($list) > 1 ? array_merge(...$list) : $list[0];
+        return array_merge(...$list);
     }
 
     /**
@@ -663,7 +673,14 @@ class FolderStorage extends AbstractFilesystemStorage
         /** @var string $pattern */
         $pattern = !empty($options['pattern']) ? $options['pattern'] : $this->dataPattern;
 
-        $this->dataFolder = $options['folder'];
+        /** @var UniformResourceLocator $locator */
+        $locator = Grav::instance()['locator'];
+        $folder = $options['folder'];
+        if ($locator->isStream($folder)) {
+            $folder = $locator->getResource($folder, false);
+        }
+
+        $this->dataFolder = $folder;
         $this->dataFile = $options['file'] ?? 'item';
         $this->dataExt = $extension;
         if (mb_strpos($pattern, '{FILE}') === false && mb_strpos($pattern, '{EXT}') === false) {
@@ -671,7 +688,7 @@ class FolderStorage extends AbstractFilesystemStorage
                 $pattern .= '/{FILE}{EXT}';
             } else {
                 $filesystem = Filesystem::getInstance(true);
-                $this->dataFile = basename($pattern, $extension);
+                $this->dataFile = Utils::basename($pattern, $extension);
                 $pattern = $filesystem->dirname($pattern) . '/{FILE}{EXT}';
             }
         }
@@ -679,10 +696,9 @@ class FolderStorage extends AbstractFilesystemStorage
         $this->indexed = (bool)($options['indexed'] ?? false);
         $this->keyField = $options['key'] ?? 'storage_key';
         $this->keyLen = (int)($options['key_len'] ?? 32);
+        $this->caseSensitive = (bool)($options['case_sensitive'] ?? true);
 
-        $variables = ['FOLDER' => '%1$s', 'KEY' => '%2$s', 'KEY:2' => '%3$s', 'FILE' => '%4$s', 'EXT' => '%5$s'];
-        $pattern = Utils::simpleTemplate($pattern, $variables);
-
+        $pattern = Utils::simpleTemplate($pattern, $this->variables);
         if (!$pattern) {
             throw new RuntimeException('Bad storage folder pattern');
         }

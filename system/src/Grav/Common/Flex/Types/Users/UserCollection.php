@@ -5,30 +5,25 @@ declare(strict_types=1);
 /**
  * @package    Grav\Common\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
 namespace Grav\Common\Flex\Types\Users;
 
-use Grav\Common\Flex\Traits\FlexCollectionTrait;
-use Grav\Common\Flex\Traits\FlexGravTrait;
+use Grav\Common\Flex\FlexCollection;
 use Grav\Common\User\Interfaces\UserCollectionInterface;
 use Grav\Common\User\Interfaces\UserInterface;
-use Grav\Framework\Flex\FlexCollection;
 use function is_string;
 
 /**
  * Class UserCollection
  * @package Grav\Common\Flex\Types\Users
  *
- * @extends FlexCollection<string,UserObject>
+ * @extends FlexCollection<UserObject>
  */
 class UserCollection extends FlexCollection implements UserCollectionInterface
 {
-    use FlexGravTrait;
-    use FlexCollectionTrait;
-
     /**
      * @return array
      */
@@ -97,7 +92,7 @@ class UserCollection extends FlexCollection implements UserCollectionInterface
                 } else {
                     $user = parent::find($query, $field);
                 }
-                if ($user) {
+                if ($user instanceof UserObject) {
                     return $user;
                 }
             }
@@ -128,7 +123,7 @@ class UserCollection extends FlexCollection implements UserCollectionInterface
      * @param string $key
      * @return string
      */
-    protected function filterUsername(string $key)
+    protected function filterUsername(string $key): string
     {
         $storage = $this->getFlexDirectory()->getStorage();
         if (method_exists($storage, 'normalizeKey')) {

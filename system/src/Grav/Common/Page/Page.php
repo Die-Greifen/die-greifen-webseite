@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Page
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -24,6 +24,7 @@ use Grav\Common\Page\Interfaces\PageInterface;
 use Grav\Common\Media\Traits\MediaTrait;
 use Grav\Common\Page\Markdown\Excerpts;
 use Grav\Common\Page\Traits\PageFormTrait;
+use Grav\Common\Twig\Twig;
 use Grav\Common\Uri;
 use Grav\Common\Utils;
 use Grav\Common\Yaml;
@@ -83,7 +84,7 @@ class Page implements PageInterface
     protected $unpublish_date;
     /** @var string */
     protected $slug;
-    /** @var string */
+    /** @var string|null */
     protected $route;
     /** @var string|null */
     protected $raw_route;
@@ -195,7 +196,7 @@ class Page implements PageInterface
         }
 
         // extract page language from page extension
-        $language = trim(basename($this->extension(), 'md'), '.') ?: null;
+        $language = trim(Utils::basename($this->extension(), 'md'), '.') ?: null;
         $this->language($language);
 
         $this->hide_home_route = $config->get('system.home.hide_in_urls', false);
@@ -215,6 +216,26 @@ class Page implements PageInterface
         $this->urlExtension();
 
         return $this;
+    }
+
+    #[\ReturnTypeWillChange]
+    public function __clone()
+    {
+        $this->initialized = false;
+        $this->header = $this->header ? clone $this->header : null;
+    }
+
+    /**
+     * @return void
+     */
+    public function initialize(): void
+    {
+        if (!$this->initialized) {
+            $this->initialized = true;
+            $this->route = null;
+            $this->raw_route = null;
+            $this->_forms = null;
+        }
     }
 
     /**
@@ -271,7 +292,8 @@ class Page implements PageInterface
             if ($exists) {
                 $aPage = new Page();
                 $aPage->init(new SplFileInfo($path), $languageExtension);
-
+                $aPage->route($this->route());
+                $aPage->rawRoute($this->rawRoute());
                 $route = $aPage->header()->routes['default'] ?? $aPage->rawRoute();
                 if (!$route) {
                     $route = $aPage->route();
@@ -366,7 +388,7 @@ class Page implements PageInterface
      * Gets and Sets the header based on the YAML configuration at the top of the .md file
      *
      * @param  object|array|null $var a YAML object representing the configuration for the file
-     * @return object      the current YAML configuration
+     * @return \stdClass      the current YAML configuration
      */
     public function header($var = null)
     {
@@ -600,7 +622,12 @@ class Page implements PageInterface
             $headers['Vary'] = 'Accept-Encoding';
         }
 
-        return $headers;
+
+        // Added new Headers event
+        $headers_obj = (object) $headers;
+        Grav::instance()->fireEvent('onPageHeaders', new Event(['headers' => $headers_obj]));
+
+        return (array)$headers_obj;
     }
 
     /**
@@ -908,20 +935,25 @@ class Page implements PageInterface
 
         $content = $this->content;
         if ($keepTwig) {
+            $token = [
+                '/' . Utils::generateRandomString(3),
+                Utils::generateRandomString(3) . '/'
+            ];
             // Base64 encode any twig.
             $content = preg_replace_callback(
-                ['/({#)(.*?)(#})/mu', '/({{)(.*?)(}})/mu', '/({%)(.*?)(%})/mu'],
-                static function ($matches) { return $matches[1] . base64_encode($matches[2]) . $matches[3]; },
+                ['/({#.*?#})/mu', '/({{.*?}})/mu', '/({%.*?%})/mu'],
+                static function ($matches) use ($token) { return $token[0] . base64_encode($matches[1]) . $token[1]; },
                 $content
             );
         }
+
         $content = $parsedown->text($content);
 
         if ($keepTwig) {
             // Base64 decode the encoded twig.
             $content = preg_replace_callback(
-                ['/({#)(.*?)(#})/mu', '/({{)(.*?)(}})/mu', '/({%)(.*?)(%})/mu'],
-                static function ($matches) { return $matches[1] . base64_decode($matches[2]) . $matches[3]; },
+                ['`' . $token[0] . '([A-Za-z0-9+/]+={0,2})' . $token[1] . '`mu'],
+                static function ($matches) { return base64_decode($matches[1]); },
                 $content
             );
         }
@@ -937,6 +969,7 @@ class Page implements PageInterface
      */
     private function processTwig()
     {
+        /** @var Twig $twig */
         $twig = Grav::instance()['twig'];
         $this->content = $twig->processPage($this, $this->content);
     }
@@ -948,6 +981,7 @@ class Page implements PageInterface
      */
     public function cachePageContent()
     {
+        /** @var Cache $cache */
         $cache = Grav::instance()['cache'];
         $cache_id = md5('page' . $this->getCacheKey());
         $cache->save($cache_id, ['content' => $this->content, 'content_meta' => $this->content_meta]);
@@ -966,7 +1000,7 @@ class Page implements PageInterface
     /**
      * Needed by the onPageContentProcessed event to set the raw page content
      *
-     * @param string $content
+     * @param string|null $content
      * @return void
      */
     public function setRawContent($content)
@@ -1219,6 +1253,17 @@ class Page implements PageInterface
     }
 
     /**
+     * Returns the blueprint from the page.
+     *
+     * @param string $name Not used.
+     * @return Blueprint Returns a Blueprint.
+     */
+    public function getBlueprint(string $name = '')
+    {
+        return $this->blueprints();
+    }
+
+    /**
      * Get the blueprint name for this page.  Use the blueprint form field if set
      *
      * @return string
@@ -1425,7 +1470,7 @@ class Page implements PageInterface
             $this->extension = $var;
         }
         if (empty($this->extension)) {
-            $this->extension = '.' . pathinfo($this->name(), PATHINFO_EXTENSION);
+            $this->extension = '.' . Utils::pathinfo($this->name(), PATHINFO_EXTENSION);
         }
 
         return $this->extension;
@@ -1665,7 +1710,7 @@ class Page implements PageInterface
 
         // if not metadata yet, process it.
         if (null === $this->metadata) {
-            $header_tag_http_equivs = ['content-type', 'default-style', 'refresh', 'x-ua-compatible'];
+            $header_tag_http_equivs = ['content-type', 'default-style', 'refresh', 'x-ua-compatible', 'content-security-policy'];
 
             $this->metadata = [];
 
@@ -1698,7 +1743,7 @@ class Page implements PageInterface
                         $this->metadata[$prop_key] = [
                             'name' => $prop_key,
                             'property' => $prop_key,
-                            'content' => $escape ? htmlspecialchars($prop_value, ENT_QUOTES, 'UTF-8') : $prop_value
+                            'content' => $escape ? htmlspecialchars($prop_value, ENT_QUOTES | ENT_HTML5, 'UTF-8') : $prop_value
                         ];
                     }
                 } else {
@@ -1707,19 +1752,19 @@ class Page implements PageInterface
                         if (in_array($key, $header_tag_http_equivs, true)) {
                             $this->metadata[$key] = [
                                 'http_equiv' => $key,
-                                'content' => $escape ? htmlspecialchars($value, ENT_QUOTES, 'UTF-8') : $value
+                                'content' => $escape ? htmlspecialchars($value, ENT_COMPAT, 'UTF-8') : $value
                             ];
                         } elseif ($key === 'charset') {
-                            $this->metadata[$key] = ['charset' => $escape ? htmlspecialchars($value, ENT_QUOTES, 'UTF-8') : $value];
+                            $this->metadata[$key] = ['charset' => $escape ? htmlspecialchars($value, ENT_QUOTES | ENT_HTML5, 'UTF-8') : $value];
                         } else {
                             // if it's a social metadata with separator, render as property
                             $separator = strpos($key, ':');
                             $hasSeparator = $separator && $separator < strlen($key) - 1;
                             $entry = [
-                                'content' => $escape ? htmlspecialchars($value, ENT_QUOTES, 'UTF-8') : $value
+                                'content' => $escape ? htmlspecialchars($value, ENT_QUOTES | ENT_HTML5, 'UTF-8') : $value
                             ];
 
-                            if ($hasSeparator && !Utils::startsWith($key, 'twitter')) {
+                            if ($hasSeparator && !Utils::startsWith($key, ['twitter', 'flattr'])) {
                                 $entry['property'] = $key;
                             } else {
                                 $entry['name'] = $key;
@@ -1858,11 +1903,6 @@ class Page implements PageInterface
         $uri = $grav['uri'];
         $url = $uri->rootUrl($include_host) . '/' . trim($route, '/') . $this->urlExtension();
 
-        // trim trailing / if not root
-        if ($url !== '/') {
-            $url = rtrim($url, '/');
-        }
-
         return Uri::filterPath($url);
     }
 
@@ -1871,7 +1911,7 @@ class Page implements PageInterface
      * the parents route and the current Page's slug.
      *
      * @param  string|null $var Set new default route.
-     * @return string  The route for the Page.
+     * @return string|null  The route for the Page.
      */
     public function route($var = null)
     {
@@ -2074,9 +2114,9 @@ class Page implements PageInterface
     {
         if ($var !== null) {
             // Filename of the page.
-            $this->name = basename($var);
+            $this->name = Utils::basename($var);
             // Folder of the page.
-            $this->folder = basename(dirname($var));
+            $this->folder = Utils::basename(dirname($var));
             // Path to the page.
             $this->path = dirname($var, 2);
         }
@@ -2091,7 +2131,7 @@ class Page implements PageInterface
      */
     public function filePathClean()
     {
-        return str_replace(ROOT_DIR, '', $this->filePath());
+        return str_replace(GRAV_ROOT . DS, '', $this->filePath());
     }
 
     /**
@@ -2115,7 +2155,7 @@ class Page implements PageInterface
     {
         if ($var !== null) {
             // Folder of the page.
-            $this->folder = basename($var);
+            $this->folder = Utils::basename($var);
             // Path to the page.
             $this->path = dirname($var);
         }
@@ -2270,11 +2310,11 @@ class Page implements PageInterface
     {
         if ($var !== null) {
             // make sure first level are arrays
-            array_walk($var, function (&$value) {
+            array_walk($var, static function (&$value) {
                 $value = (array) $value;
             });
             // make sure all values are strings
-            array_walk_recursive($var, function (&$value) {
+            array_walk_recursive($var, static function (&$value) {
                 $value = (string) $value;
             });
             $this->taxonomy = $var;
@@ -2492,21 +2532,23 @@ class Page implements PageInterface
      */
     public function activeChild()
     {
-        $uri = Grav::instance()['uri'];
-        $pages = Grav::instance()['pages'];
+        $grav = Grav::instance();
+        /** @var Uri $uri */
+        $uri = $grav['uri'];
+        /** @var Pages $pages */
+        $pages = $grav['pages'];
         $uri_path = rtrim(urldecode($uri->path()), '/');
-        $routes = Grav::instance()['pages']->routes();
+        $routes = $pages->routes();
 
         if (isset($routes[$uri_path])) {
+            $page = $pages->find($uri->route());
             /** @var PageInterface|null $child_page */
-            $child_page = $pages->find($uri->route())->parent();
-            if ($child_page) {
-                while (!$child_page->root()) {
-                    if ($this->path() === $child_page->path()) {
-                        return true;
-                    }
-                    $child_page = $child_page->parent();
+            $child_page = $page ? $page->parent() : null;
+            while ($child_page && !$child_page->root()) {
+                if ($this->path() === $child_page->path()) {
+                    return true;
                 }
+                $child_page = $child_page->parent();
             }
         }
 

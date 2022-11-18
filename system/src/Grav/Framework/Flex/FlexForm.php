@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -15,6 +15,7 @@ use Grav\Common\Data\Blueprint;
 use Grav\Common\Data\Data;
 use Grav\Common\Grav;
 use Grav\Common\Twig\Twig;
+use Grav\Common\Utils;
 use Grav\Framework\Flex\Interfaces\FlexFormInterface;
 use Grav\Framework\Flex\Interfaces\FlexObjectFormInterface;
 use Grav\Framework\Flex\Interfaces\FlexObjectInterface;
@@ -103,7 +104,14 @@ class FlexForm implements FlexObjectFormInterface, JsonSerializable
     {
         $this->name = $name;
         $this->setObject($object);
-        $this->setName($object->getFlexType(), $name);
+
+        if (isset($options['form']['name'])) {
+            // Use custom form name.
+            $this->flexName = $options['form']['name'];
+        } else {
+            // Use standard form name.
+            $this->setName($object->getFlexType(), $name);
+        }
         $this->setId($this->getName());
 
         $uniqueId = $options['unique_id'] ?? null;
@@ -118,9 +126,18 @@ class FlexForm implements FlexObjectFormInterface, JsonSerializable
             $uniqueId = md5($uniqueId);
         }
         $this->setUniqueId($uniqueId);
+
         $directory = $object->getFlexDirectory();
-        $this->setFlashLookupFolder($directory->getBlueprint()->get('form/flash_folder') ?? 'tmp://forms/[SESSIONID]');
+        $this->setFlashLookupFolder($options['flash_folder'] ?? $directory->getBlueprint()->get('form/flash_folder') ?? 'tmp://forms/[SESSIONID]');
         $this->form = $options['form'] ?? null;
+
+        if (Utils::isPositive($this->items['disabled'] ?? $this->form['disabled'] ?? false)) {
+            $this->disable();
+        }
+
+        if (!empty($options['reset'])) {
+            $this->getFlash()->delete();
+        }
 
         $this->initialize();
     }
@@ -159,6 +176,17 @@ class FlexForm implements FlexObjectFormInterface, JsonSerializable
         }
 
         return $this;
+    }
+
+    /**
+     * @param string $uniqueId
+     * @return void
+     */
+    public function setUniqueId(string $uniqueId): void
+    {
+        if ($uniqueId !== '') {
+            $this->uniqueid = $uniqueId;
+        }
     }
 
     /**
@@ -298,6 +326,7 @@ class FlexForm implements FlexObjectFormInterface, JsonSerializable
                 'unique_id' => $this->getUniqueId(),
                 'form_name' => $this->getName(),
                 'folder' => $this->getFlashFolder(),
+                'id' => $this->getFlashId(),
                 'object' => $this->getObject()
             ];
 
@@ -367,22 +396,28 @@ class FlexForm implements FlexObjectFormInterface, JsonSerializable
     {
         $object = $this->getObject();
         if (!method_exists($object, 'route')) {
-            return null;
+            /** @var Route $route */
+            $route = Grav::instance()['route'];
+
+            return $route->withExtension('json')->withGravParam('task', 'media.upload');
         }
 
         return $object->route('/edit.json/task:media.upload');
     }
 
     /**
-     * @param string $field
-     * @param string $filename
+     * @param string|null $field
+     * @param string|null $filename
      * @return Route|null
      */
-    public function getFileDeleteAjaxRoute($field, $filename): ?Route
+    public function getFileDeleteAjaxRoute($field = null, $filename = null): ?Route
     {
         $object = $this->getObject();
         if (!method_exists($object, 'route')) {
-            return null;
+            /** @var Route $route */
+            $route = Grav::instance()['route'];
+
+            return $route->withExtension('json')->withGravParam('task', 'media.delete');
         }
 
         return $object->route('/edit.json/task:media.delete');
@@ -410,6 +445,7 @@ class FlexForm implements FlexObjectFormInterface, JsonSerializable
      * @param string $name
      * @return mixed|null
      */
+    #[\ReturnTypeWillChange]
     public function __get($name)
     {
         $method = "get{$name}";
@@ -427,6 +463,7 @@ class FlexForm implements FlexObjectFormInterface, JsonSerializable
      * @param mixed $value
      * @return void
      */
+    #[\ReturnTypeWillChange]
     public function __set($name, $value)
     {
         $method = "set{$name}";
@@ -439,6 +476,7 @@ class FlexForm implements FlexObjectFormInterface, JsonSerializable
      * @param string $name
      * @return bool
      */
+    #[\ReturnTypeWillChange]
     public function __isset($name)
     {
         $method = "get{$name}";
@@ -455,6 +493,7 @@ class FlexForm implements FlexObjectFormInterface, JsonSerializable
      * @param string $name
      * @return void
      */
+    #[\ReturnTypeWillChange]
     public function __unset($name)
     {
     }
@@ -532,7 +571,11 @@ class FlexForm implements FlexObjectFormInterface, JsonSerializable
     protected function doSerialize(): array
     {
         return $this->doTraitSerialize() + [
+                'items' => $this->items,
+                'form' => $this->form,
                 'object' => $this->object,
+                'flexName' => $this->flexName,
+                'submitMethod' => $this->submitMethod,
             ];
     }
 
@@ -544,7 +587,11 @@ class FlexForm implements FlexObjectFormInterface, JsonSerializable
     {
         $this->doTraitUnserialize($data);
 
-        $this->object = $data['object'];
+        $this->items = $data['items'] ?? null;
+        $this->form = $data['form'] ?? null;
+        $this->object = $data['object'] ?? null;
+        $this->flexName = $data['flexName'] ?? null;
+        $this->submitMethod = $data['submitMethod'] ?? null;
     }
 
     /**
@@ -552,6 +599,7 @@ class FlexForm implements FlexObjectFormInterface, JsonSerializable
      *
      * @param ArrayAccess|Data|null $data
      * @return void
+     * @phpstan-param ArrayAccess<string,mixed>|Data|null $data
      */
     protected function filterData($data = null): void
     {

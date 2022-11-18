@@ -53,20 +53,18 @@ class StreamWrapper
             throw new \InvalidArgumentException(sprintf('Providing a client to "%s()" is required when the response doesn\'t have any "stream()" method.', __CLASS__));
         }
 
-        if (false === stream_wrapper_register('symfony', __CLASS__, \STREAM_IS_URL)) {
+        static $registered = false;
+
+        if (!$registered = $registered || stream_wrapper_register(strtr(__CLASS__, '\\', '-'), __CLASS__)) {
             throw new \RuntimeException(error_get_last()['message'] ?? 'Registering the "symfony" stream wrapper failed.');
         }
 
-        try {
-            $context = [
-                'client' => $client ?? $response,
-                'response' => $response,
-            ];
+        $context = [
+            'client' => $client ?? $response,
+            'response' => $response,
+        ];
 
-            return fopen('symfony://'.$response->getInfo('url'), 'r', false, stream_context_create(['symfony' => $context])) ?: null;
-        } finally {
-            stream_wrapper_unregister('symfony');
-        }
+        return fopen(strtr(__CLASS__, '\\', '-').'://'.$response->getInfo('url'), 'r', false, stream_context_create(['symfony' => $context]));
     }
 
     public function getResponse(): ResponseInterface
@@ -281,7 +279,7 @@ class StreamWrapper
             'uid' => 0,
             'gid' => 0,
             'rdev' => 0,
-            'size' => (int) ($headers['content-length'][0] ?? 0),
+            'size' => (int) ($headers['content-length'][0] ?? -1),
             'atime' => 0,
             'mtime' => strtotime($headers['last-modified'][0] ?? '') ?: 0,
             'ctime' => 0,

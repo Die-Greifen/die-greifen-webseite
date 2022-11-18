@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Twig
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -49,16 +49,15 @@ class TwigNodeTryCatch extends Node
 
         $compiler
             ->indent()
-            ->subcompile($this->getNode('try'));
+            ->subcompile($this->getNode('try'))
+            ->outdent()
+            ->write('} catch (\Exception $e) {' . "\n")
+            ->indent()
+            ->write('if (isset($context[\'grav\'][\'debugger\'])) $context[\'grav\'][\'debugger\']->addException($e);' . "\n")
+            ->write('$context[\'e\'] = $e;' . "\n");
 
         if ($this->hasNode('catch')) {
-            $compiler
-                ->outdent()
-                ->write('} catch (\Exception $e) {' . "\n")
-                ->indent()
-                ->write('if (isset($context[\'grav\'][\'debugger\'])) $context[\'grav\'][\'debugger\']->addException($e);' . "\n")
-                ->write('$context[\'e\'] = $e;' . "\n")
-                ->subcompile($this->getNode('catch'));
+            $compiler->subcompile($this->getNode('catch'));
         }
 
         $compiler

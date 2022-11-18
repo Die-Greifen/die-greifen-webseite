@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\User
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -27,7 +27,7 @@ class Group extends Data
      * @return array
      * @deprecated 1.7, use $grav['user_groups'] Flex UserGroupCollection instead
      */
-    private static function groups()
+    protected static function groups()
     {
         user_error(__METHOD__ . '() is deprecated since Grav 1.7, use $grav[\'user_groups\'] Flex UserGroupCollection instead', E_USER_DEPRECATED);
 

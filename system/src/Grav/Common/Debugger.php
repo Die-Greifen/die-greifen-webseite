@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -332,7 +332,7 @@ class Debugger
             return new Response(404, $headers, json_encode($response));
         }
 
-        $data = is_array($data) ? array_map(function ($item) {
+        $data = is_array($data) ? array_map(static function ($item) {
             return $item->toArray();
         }, $data) : $data->toArray();
 
@@ -856,6 +856,10 @@ class Debugger
             $scope = 'grav';
         } elseif (strpos($errfile, '/twig/') !== false) {
             $scope = 'twig';
+            // TODO: remove when upgrading to Twig 2+
+            if (str_contains($errstr, '#[\ReturnTypeWillChange]') || str_contains($errstr, 'Passing null to parameter')) {
+                return true;
+            }
         } elseif (stripos($errfile, '/yaml/') !== false) {
             $scope = 'yaml';
         } elseif (strpos($errfile, '/vendor/') !== false) {

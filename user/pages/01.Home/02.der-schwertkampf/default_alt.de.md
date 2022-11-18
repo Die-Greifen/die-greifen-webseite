@@ -1,6 +1,6 @@
 ---
 title: 'Der Schwertkampf'
-media_order: schwertkampf.JPG
+media_order: 'schwertkampf.jpg,20150924_194923.jpg,DSCF5609.jpg'
 ---
 
 ## Unsere Motivation
@@ -25,3 +25,5 @@ Anpassungen oder auch Choreographien sind im Bezug auf eine öffentliche Vorfüh
 Unter dem historischen Fechten versteht man die originalgetreue Nachempfindung der historischen Kampfkünste mit dem Schwert. Die Nachempfindung ist nur anhand der Reproduktionen und Interpretation von historischen Schriften möglich und bietet durch eine sehr begrenzte Darstellungsmöglichkeit sehr viel Spielraum für Interpretationen.
 
 So ist ein Austausch von Gruppen bezogen auf das historische Fechten sehr sinnvoll um die Tradition der deutschen Fechtschule am Leben zu erhalten.
+
+![](20150924_194923.jpg)![](DSCF5609.jpg)

@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\User
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -21,6 +21,7 @@ use Grav\Common\Page\Medium\MediumFactory;
 use Grav\Common\User\Authentication;
 use Grav\Common\User\Interfaces\UserInterface;
 use Grav\Common\User\Traits\UserTrait;
+use Grav\Common\Utils;
 use Grav\Framework\Flex\Flex;
 use function is_array;
 
@@ -57,6 +58,7 @@ class User extends Data implements UserInterface
      * @param string $offset
      * @return bool
      */
+    #[\ReturnTypeWillChange]
     public function offsetExists($offset)
     {
         $value = parent::offsetExists($offset);
@@ -73,6 +75,7 @@ class User extends Data implements UserInterface
      * @param string $offset
      * @return mixed
      */
+    #[\ReturnTypeWillChange]
     public function offsetGet($offset)
     {
         $value = parent::offsetGet($offset);
@@ -110,7 +113,7 @@ class User extends Data implements UserInterface
     }
 
     /**
-     * Save user without the username
+     * Save user
      *
      * @return void
      */
@@ -131,14 +134,24 @@ class User extends Data implements UserInterface
             }
 
             // if plain text password, hash it and remove plain text
-            $password = $this->get('password');
-            if ($password) {
+            $password = $this->get('password') ?? $this->get('password1');
+            if (null !== $password && '' !== $password) {
+                $password2 = $this->get('password2');
+                if (!\is_string($password) || ($password2 && $password !== $password2)) {
+                    throw new \RuntimeException('Passwords did not match.');
+                }
+
                 $this->set('hashed_password', Authentication::create($password));
-                $this->undef('password');
             }
+            $this->undef('password');
+            $this->undef('password1');
+            $this->undef('password2');
 
             $data = $this->items;
-            unset($data['username'], $data['authenticated'], $data['authorized']);
+            if ($username === $data['username']) {
+                unset($data['username']);
+            }
+            unset($data['authenticated'], $data['authorized']);
 
             $file->save($data);
 
@@ -165,7 +178,7 @@ class User extends Data implements UserInterface
             if ($path && is_file($path)) {
                 $medium = MediumFactory::fromFile($path);
                 if ($medium) {
-                    $media->add(basename($path), $medium);
+                    $media->add(Utils::basename($path), $medium);
                 }
             }
 
@@ -180,7 +193,7 @@ class User extends Data implements UserInterface
      */
     public function getMediaFolder()
     {
-        return $this->blueprints()->fields()['avatar']['destination'] ?? 'user://accounts/avatars';
+        return $this->blueprints()->fields()['avatar']['destination'] ?? 'account://avatars';
     }
 
     /**
@@ -283,6 +296,7 @@ class User extends Data implements UserInterface
      * @return int
      * @deprecated 1.6 Method makes no sense for user account.
      */
+    #[\ReturnTypeWillChange]
     public function count()
     {
         user_error(__CLASS__ . '::' . __FUNCTION__ . '() is deprecated since Grav 1.6', E_USER_DEPRECATED);

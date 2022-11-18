@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Service
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -30,7 +30,7 @@ class StreamsServiceProvider implements ServiceProviderInterface
     public function register(Container $container)
     {
         $container['locator'] = function (Container $container) {
-            $locator = new UniformResourceLocator(GRAV_ROOT);
+            $locator = new UniformResourceLocator(GRAV_WEBROOT);
 
             /** @var Setup $setup */
             $setup = $container['setup'];

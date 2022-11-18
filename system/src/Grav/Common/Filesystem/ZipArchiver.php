@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Filesystem
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -57,7 +57,9 @@ class ZipArchiver extends Archiver
             throw new InvalidArgumentException('ZipArchiver: Zip PHP module not installed...');
         }
 
-        if (!file_exists($source)) {
+        // Get real path for our folder
+        $rootPath = realpath($source);
+        if (!$rootPath) {
             throw new InvalidArgumentException('ZipArchiver: ' . $source . ' cannot be found...');
         }
 
@@ -65,9 +67,6 @@ class ZipArchiver extends Archiver
         if (!$zip->open($this->archive_file, ZipArchive::CREATE)) {
             throw new InvalidArgumentException('ZipArchiver:' . $this->archive_file . ' cannot be created...');
         }
-
-        // Get real path for our folder
-        $rootPath = realpath($source);
 
         $files = $this->getArchiveFiles($rootPath);
 

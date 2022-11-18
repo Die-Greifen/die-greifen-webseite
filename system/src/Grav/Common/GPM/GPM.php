@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\GPM
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -12,6 +12,7 @@ namespace Grav\Common\GPM;
 use Exception;
 use Grav\Common\Grav;
 use Grav\Common\Filesystem\Folder;
+use Grav\Common\HTTP\Response;
 use Grav\Common\Inflector;
 use Grav\Common\Iterator;
 use Grav\Common\Utils;
@@ -35,7 +36,11 @@ class GPM extends Iterator
     /** @var Remote\Packages|null Remote available Packages */
     private $repository;
     /** @var Remote\GravCore|null Remove Grav Packages */
-    public $grav;
+    private $grav;
+    /** @var bool */
+    private $refresh;
+    /** @var callable|null */
+    private $callback;
 
     /** @var array Internal cache */
     protected $cache;
@@ -55,13 +60,47 @@ class GPM extends Iterator
     public function __construct($refresh = false, $callback = null)
     {
         parent::__construct();
+
+        Folder::create(CACHE_DIR . '/gpm');
+
         $this->cache = [];
         $this->installed = new Local\Packages();
-        try {
-            $this->repository = new Remote\Packages($refresh, $callback);
-            $this->grav = new Remote\GravCore($refresh, $callback);
-        } catch (Exception $e) {
+        $this->refresh = $refresh;
+        $this->callback = $callback;
+    }
+
+    /**
+     * Magic getter method
+     *
+     * @param string $offset Asset name value
+     * @return mixed Asset value
+     */
+    #[\ReturnTypeWillChange]
+    public function __get($offset)
+    {
+        switch ($offset) {
+            case 'grav':
+                return $this->getGrav();
         }
+
+        return parent::__get($offset);
+    }
+
+    /**
+     * Magic method to determine if the attribute is set
+     *
+     * @param string $offset Asset name value
+     * @return bool True if the value is set
+     */
+    #[\ReturnTypeWillChange]
+    public function __isset($offset)
+    {
+        switch ($offset) {
+            case 'grav':
+                return $this->getGrav() !== null;
+        }
+
+        return parent::__isset($offset);
     }
 
     /**
@@ -139,13 +178,27 @@ class GPM extends Iterator
         return $this->installed['plugins'];
     }
 
+
+    /**
+     * Returns the plugin's enabled state
+     *
+     * @param  string $slug
+     * @return bool True if the Plugin is Enabled. False if manually set to enable:false. Null otherwise.
+     */
+    public function isPluginEnabled($slug): bool
+    {
+        $grav = Grav::instance();
+
+        return ($grav['config']['plugins'][$slug]['enabled'] ?? false) === true;
+    }
+
     /**
      * Checks if a Plugin is installed
      *
      * @param  string $slug The slug of the Plugin
      * @return bool True if the Plugin has been installed. False otherwise
      */
-    public function isPluginInstalled($slug)
+    public function isPluginInstalled($slug): bool
     {
         return isset($this->installed['plugins'][$slug]);
     }
@@ -183,12 +236,27 @@ class GPM extends Iterator
     }
 
     /**
+     * Checks if a Theme is enabled
+     *
+     * @param  string $slug The slug of the Theme
+     * @return bool True if the Theme has been set to the default theme. False if installed, but not enabled. Null otherwise.
+     */
+    public function isThemeEnabled($slug): bool
+    {
+        $grav = Grav::instance();
+
+        $current_theme = $grav['config']['system']['pages']['theme'] ?? null;
+
+        return $current_theme === $slug;
+    }
+
+    /**
      * Checks if a Theme is installed
      *
      * @param  string $slug The slug of the Theme
      * @return bool True if the Theme has been installed. False otherwise
      */
-    public function isThemeInstalled($slug)
+    public function isThemeInstalled($slug): bool
     {
         return isset($this->installed['themes'][$slug]);
     }
@@ -237,11 +305,12 @@ class GPM extends Iterator
     {
         $items = [];
 
-        if (null === $this->repository) {
+        $repository = $this->getRepository();
+        if (null === $repository) {
             return $items;
         }
 
-        $repository = $this->repository['plugins'];
+        $plugins = $repository['plugins'];
 
         // local cache to speed things up
         if (isset($this->cache[__METHOD__])) {
@@ -249,18 +318,18 @@ class GPM extends Iterator
         }
 
         foreach ($this->installed['plugins'] as $slug => $plugin) {
-            if (!isset($repository[$slug]) || $plugin->symlink || !$plugin->version || $plugin->gpm === false) {
+            if (!isset($plugins[$slug]) || $plugin->symlink || !$plugin->version || $plugin->gpm === false) {
                 continue;
             }
 
             $local_version = $plugin->version ?? 'Unknown';
-            $remote_version = $repository[$slug]->version;
+            $remote_version = $plugins[$slug]->version;
 
             if (version_compare($local_version, $remote_version) < 0) {
-                $repository[$slug]->available = $remote_version;
-                $repository[$slug]->version = $local_version;
-                $repository[$slug]->type = $repository[$slug]->release_type;
-                $items[$slug] = $repository[$slug];
+                $plugins[$slug]->available = $remote_version;
+                $plugins[$slug]->version = $local_version;
+                $plugins[$slug]->type = $plugins[$slug]->release_type;
+                $items[$slug] = $plugins[$slug];
             }
         }
 
@@ -277,19 +346,20 @@ class GPM extends Iterator
      */
     public function getLatestVersionOfPackage($package_name)
     {
-        if (null === $this->repository) {
+        $repository = $this->getRepository();
+        if (null === $repository) {
             return null;
         }
 
-        $repository = $this->repository['plugins'];
-        if (isset($repository[$package_name])) {
-            return $repository[$package_name]->available ?: $repository[$package_name]->version;
+        $plugins = $repository['plugins'];
+        if (isset($plugins[$package_name])) {
+            return $plugins[$package_name]->available ?: $plugins[$package_name]->version;
         }
 
         //Not a plugin, it's a theme?
-        $repository = $this->repository['themes'];
-        if (isset($repository[$package_name])) {
-            return $repository[$package_name]->available ?: $repository[$package_name]->version;
+        $themes = $repository['themes'];
+        if (isset($themes[$package_name])) {
+            return $themes[$package_name]->available ?: $themes[$package_name]->version;
         }
 
         return null;
@@ -327,11 +397,12 @@ class GPM extends Iterator
     {
         $items = [];
 
-        if (null === $this->repository) {
+        $repository = $this->getRepository();
+        if (null === $repository) {
             return $items;
         }
 
-        $repository = $this->repository['themes'];
+        $themes = $repository['themes'];
 
         // local cache to speed things up
         if (isset($this->cache[__METHOD__])) {
@@ -339,18 +410,18 @@ class GPM extends Iterator
         }
 
         foreach ($this->installed['themes'] as $slug => $plugin) {
-            if (!isset($repository[$slug]) || $plugin->symlink || !$plugin->version || $plugin->gpm === false) {
+            if (!isset($themes[$slug]) || $plugin->symlink || !$plugin->version || $plugin->gpm === false) {
                 continue;
             }
 
             $local_version = $plugin->version ?? 'Unknown';
-            $remote_version = $repository[$slug]->version;
+            $remote_version = $themes[$slug]->version;
 
             if (version_compare($local_version, $remote_version) < 0) {
-                $repository[$slug]->available = $remote_version;
-                $repository[$slug]->version = $local_version;
-                $repository[$slug]->type = $repository[$slug]->release_type;
-                $items[$slug] = $repository[$slug];
+                $themes[$slug]->available = $remote_version;
+                $themes[$slug]->version = $local_version;
+                $themes[$slug]->type = $themes[$slug]->release_type;
+                $items[$slug] = $themes[$slug];
             }
         }
 
@@ -378,19 +449,20 @@ class GPM extends Iterator
      */
     public function getReleaseType($package_name)
     {
-        if (null === $this->repository) {
+        $repository = $this->getRepository();
+        if (null === $repository) {
             return null;
         }
 
-        $repository = $this->repository['plugins'];
-        if (isset($repository[$package_name])) {
-            return $repository[$package_name]->release_type;
+        $plugins = $repository['plugins'];
+        if (isset($plugins[$package_name])) {
+            return $plugins[$package_name]->release_type;
         }
 
         //Not a plugin, it's a theme?
-        $repository = $this->repository['themes'];
-        if (isset($repository[$package_name])) {
-            return $repository[$package_name]->release_type;
+        $themes = $repository['themes'];
+        if (isset($themes[$package_name])) {
+            return $themes[$package_name]->release_type;
         }
 
         return null;
@@ -441,7 +513,7 @@ class GPM extends Iterator
      */
     public function getRepositoryPlugins()
     {
-        return $this->repository['plugins'] ?? null;
+        return $this->getRepository()['plugins'] ?? null;
     }
 
     /**
@@ -464,7 +536,7 @@ class GPM extends Iterator
      */
     public function getRepositoryThemes()
     {
-        return $this->repository['themes'] ?? null;
+        return $this->getRepository()['themes'] ?? null;
     }
 
     /**
@@ -475,7 +547,29 @@ class GPM extends Iterator
      */
     public function getRepository()
     {
+        if (null === $this->repository) {
+            try {
+                $this->repository = new Remote\Packages($this->refresh, $this->callback);
+            } catch (Exception $e) {}
+        }
+
         return $this->repository;
+    }
+
+    /**
+     * Returns Grav version available in the repository
+     *
+     * @return Remote\GravCore|null
+     */
+    public function getGrav()
+    {
+        if (null === $this->grav) {
+            try {
+                $this->grav = new Remote\GravCore($this->refresh, $this->callback);
+            } catch (Exception $e) {}
+        }
+
+        return $this->grav;
     }
 
     /**
@@ -498,7 +592,7 @@ class GPM extends Iterator
         $plugins = $this->getRepositoryPlugins();
 
         if (null === $themes || null === $plugins) {
-            if (!is_writable(ROOT_DIR . '/cache/gpm')) {
+            if (!is_writable(GRAV_ROOT . '/cache/gpm')) {
                 throw new RuntimeException('The cache/gpm folder is not writable. Please check the folder permissions.');
             }
 
@@ -538,7 +632,7 @@ class GPM extends Iterator
             throw new \RuntimeException("Malformed GPM URL: {$package_file}");
         }
 
-        $filename = basename($package['path'] ?? '');
+        $filename = Utils::basename($package['path'] ?? '');
 
         if (Grav::instance()['config']->get('system.gpm.official_gpm_only') && ($package['host'] ?? null) !== 'getgrav.org') {
             throw new RuntimeException('Only official GPM URLs are allowed. You can modify this behavior in the System configuration.');
@@ -567,7 +661,7 @@ class GPM extends Iterator
         $package_file = realpath($package_file);
 
         if ($package_file && file_exists($package_file)) {
-            $filename = basename($package_file);
+            $filename = Utils::basename($package_file);
             Folder::create($tmp);
             copy($package_file, $tmp . DS . $filename);
             return $tmp . DS . $filename;
@@ -599,7 +693,7 @@ class GPM extends Iterator
         }
 
         // either theme or plugin
-        $name = basename($source);
+        $name = Utils::basename($source);
         if (Utils::contains($name, 'theme')) {
             return 'theme';
         }
@@ -637,7 +731,7 @@ class GPM extends Iterator
 
         $glob = glob($source . '*.yaml') ?: [];
         foreach ($glob as $filename) {
-            $name = strtolower(basename($filename, '.yaml'));
+            $name = strtolower(Utils::basename($filename, '.yaml'));
             if (in_array($name, $ignore_yaml_files)) {
                 continue;
             }
@@ -1023,7 +1117,6 @@ class GPM extends Iterator
 
                 //Factor in the package dependencies too
                 $dependencies = $this->calculateMergedDependenciesOfPackage($dependencyName, $dependencies);
-
             } elseif ($dependencyVersion !== '*') {
                 // Dependency already added by another package
                 // If this package requires a version higher than the currently stored one, store this requirement instead
@@ -1059,7 +1152,7 @@ class GPM extends Iterator
                         $dependencies[$dependencyName] = $dependencyVersion;
                     }
                 } else {
-                    $compatible = $this->checkNextSignificantReleasesAreCompatible($currently_stored_version_number,$current_package_version_number);
+                    $compatible = $this->checkNextSignificantReleasesAreCompatible($currently_stored_version_number, $current_package_version_number);
                     if (!$compatible) {
                         throw new RuntimeException("Dependency {$dependencyName} is required in two incompatible versions", 2);
                     }

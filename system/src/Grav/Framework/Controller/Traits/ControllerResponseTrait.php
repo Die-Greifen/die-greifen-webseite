@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Controller
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -12,13 +12,17 @@ declare(strict_types=1);
 namespace Grav\Framework\Controller\Traits;
 
 use Grav\Common\Config\Config;
+use Grav\Common\Data\ValidationException;
 use Grav\Common\Debugger;
 use Grav\Common\Grav;
+use Grav\Common\Utils;
 use Grav\Framework\Psr7\Response;
 use Grav\Framework\RequestHandler\Exception\RequestException;
 use Grav\Framework\Route\Route;
+use JsonSerializable;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Message\StreamInterface;
 use Throwable;
 use function get_class;
 use function in_array;
@@ -77,6 +81,55 @@ trait ControllerResponseTrait
     }
 
     /**
+     * @param string $filename
+     * @param string|resource|StreamInterface $resource
+     * @param array|null $headers
+     * @param array|null $options
+     * @return ResponseInterface
+     */
+    protected function createDownloadResponse(string $filename, $resource, array $headers = null, array $options = null): ResponseInterface
+    {
+        // Required for IE, otherwise Content-Disposition may be ignored
+        if (ini_get('zlib.output_compression')) {
+            @ini_set('zlib.output_compression', 'Off');
+        }
+
+        $headers = $headers ?? [];
+        $options = $options ?? ['force_download' => true];
+
+        $file_parts = Utils::pathinfo($filename);
+
+        if (!isset($headers['Content-Type'])) {
+            $mimetype = Utils::getMimeByExtension($file_parts['extension']);
+
+            $headers['Content-Type'] = $mimetype;
+        }
+
+        // TODO: add multipart download support.
+        //$headers['Accept-Ranges'] = 'bytes';
+
+        if (!empty($options['force_download'])) {
+            $headers['Content-Disposition'] = 'attachment; filename="' . $file_parts['basename'] . '"';
+        }
+
+        if (!isset($headers['Content-Length'])) {
+            $realpath = realpath($filename);
+            if ($realpath) {
+                $headers['Content-Length'] = filesize($realpath);
+            }
+        }
+
+        $headers += [
+            'Expires' => 'Mon, 26 Jul 1997 05:00:00 GMT',
+            'Last-Modified' => gmdate('D, d M Y H:i:s') . ' GMT',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate',
+            'Pragma' => 'no-cache'
+        ];
+
+        return new Response(200, $headers, $resource);
+    }
+
+    /**
      * @param string $url
      * @param int|null $code
      * @return Response
@@ -87,9 +140,9 @@ trait ControllerResponseTrait
             $code = (int)$this->getConfig()->get('system.pages.redirect_default_code', 302);
         }
 
+        $ext = Utils::pathinfo($url, PATHINFO_EXTENSION);
         $accept = $this->getAccept(['application/json', 'text/html']);
-
-        if ($accept === 'application/json') {
+        if ($ext === 'json' || $accept === 'application/json') {
             return $this->createJsonResponse(['code' => $code, 'status' => 'redirect', 'redirect' => $url]);
         }
 
@@ -122,6 +175,7 @@ trait ControllerResponseTrait
             if ($method !== 'GET' && $method !== 'HEAD') {
                 $this->setMessage($message, 'error');
                 $referer = $request->getHeaderLine('Referer');
+
                 return $this->createRedirectResponse($referer, 303);
             }
 
@@ -151,15 +205,23 @@ trait ControllerResponseTrait
     protected function getErrorJson(Throwable $e): array
     {
         $code = $this->getErrorCode($e instanceof RequestException ? $e->getHttpCode() : $e->getCode());
-        $message = $e->getMessage();
+        if ($e instanceof ValidationException) {
+            $message = $e->getMessage();
+        } else {
+            $message = htmlspecialchars($e->getMessage(), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        }
+
+        $extra = $e instanceof JsonSerializable ? $e->jsonSerialize() : [];
+
         $response = [
             'code' => $code,
             'status' => 'error',
             'message' => $message,
+            'redirect' => null,
             'error' => [
                 'code' => $code,
                 'message' => $message
-            ]
+            ] + $extra
         ];
 
         /** @var Debugger $debugger */

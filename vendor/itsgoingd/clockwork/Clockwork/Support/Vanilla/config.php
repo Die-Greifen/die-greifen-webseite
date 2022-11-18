@@ -45,7 +45,7 @@ return [
 	|
 	*/
 
-	'toolbar' => isset($_ENV['CLOCKWORK_TOOLBAR']) ? $_ENV['CLOCKWORK_TOOLBAR'] : false,
+	'toolbar' => isset($_ENV['CLOCKWORK_TOOLBAR']) ? $_ENV['CLOCKWORK_TOOLBAR'] : true,
 
 	/*
 	|------------------------------------------------------------------------------------------------------------------
@@ -65,7 +65,7 @@ return [
 		// Collect only errors (requests with HTTP 4xx and 5xx responses)
 		'errors_only' => isset($_ENV['CLOCKWORK_REQUESTS_ERRORS_ONLY']) ? $_ENV['CLOCKWORK_REQUESTS_ERRORS_ONLY'] : false,
 
-		// Response time threshold in miliseconds after which the request will be marked as slow
+		// Response time threshold in milliseconds after which the request will be marked as slow
 		'slow_threshold' => isset($_ENV['CLOCKWORK_REQUESTS_SLOW_THRESHOLD']) ? $_ENV['CLOCKWORK_REQUESTS_SLOW_THRESHOLD'] : null,
 
 		// Collect only slow requests
@@ -113,6 +113,29 @@ return [
 
 	/*
 	|------------------------------------------------------------------------------------------------------------------
+	| Clockwork web UI
+	|------------------------------------------------------------------------------------------------------------------
+	|
+	| Clockwork comes bundled with a full Clockwork App accessible as a Web UI. Here you can enable and configure this
+	| feature.
+	| Clockwork::returnWeb api is used to expose the Web UI in your vanilla app, see the installation instructions for
+	| details.
+	|
+	*/
+
+	'web' => [
+		// Enable or disable the Web UI, set to the public uri where Clockwork Web UI is accessible
+		'enable' => isset($_ENV['CLOCKWORK_WEB_ENABLE']) ? $_ENV['CLOCKWORK_WEB_ENABLE'] : true,
+
+		// Path where to install the Web UI assets, should be publicly accessible
+		'path' => isset($_ENV['CLOCKWORK_WEB_PATH']) ? $_ENV['CLOCKWORK_WEB_PATH'] : __DIR__ . '/../../../../../public/vendor/clockwork',
+
+		// Public URI where the installed Web UI assets will be accessible
+		'uri' => isset($_ENV['CLOCKWORK_WEB_URI']) ? $_ENV['CLOCKWORK_WEB_URI'] : '/vendor/clockwork'
+	],
+
+	/*
+	|------------------------------------------------------------------------------------------------------------------
 	| Metadata storage
 	|------------------------------------------------------------------------------------------------------------------
 	|
@@ -135,11 +158,27 @@ return [
 	'storage_sql_username' => isset($_ENV['CLOCKWORK_STORAGE_SQL_USERNAME']) ? $_ENV['CLOCKWORK_STORAGE_SQL_USERNAME'] : null,
 	'storage_sql_password' => isset($_ENV['CLOCKWORK_STORAGE_SQL_PASSWORD']) ? $_ENV['CLOCKWORK_STORAGE_SQL_PASSWORD'] : null,
 
-	// SQL table name to use, the table is automatically created and udpated when needed
+	// SQL table name to use, the table is automatically created and updated when needed
 	'storage_sql_table' => isset($_ENV['CLOCKWORK_STORAGE_SQL_TABLE']) ? $_ENV['CLOCKWORK_STORAGE_SQL_TABLE'] : 'clockwork',
 
 	// Maximum lifetime of collected metadata in minutes, older requests will automatically be deleted, false to disable
 	'storage_expiration' => isset($_ENV['CLOCKWORK_STORAGE_EXPIRATION']) ? $_ENV['CLOCKWORK_STORAGE_EXPIRATION'] : 60 * 24 * 7,
+
+	/*
+	|------------------------------------------------------------------------------------------------------------------
+	| Authentication
+	|------------------------------------------------------------------------------------------------------------------
+	|
+	| Clockwork can be configured to require authentication before allowing access to the collected data. This might be
+	| useful when the application is publicly accessible. Setting to true will enable a simple authentication with a
+	| pre-configured password. You can also pass a class name of a custom implementation.
+	|
+	*/
+
+	'authentication' => isset($_ENV['CLOCKWORK_AUTHENTICATION']) ? $_ENV['CLOCKWORK_AUTHENTICATION'] : false,
+
+	// Password for the simple authentication
+	'authentication_password' => isset($_ENV['CLOCKWORK_AUTHENTICATION_PASSWORD']) ? $_ENV['CLOCKWORK_AUTHENTICATION_PASSWORD'] : 'VerySecretPassword',
 
 	/*
 	|------------------------------------------------------------------------------------------------------------------

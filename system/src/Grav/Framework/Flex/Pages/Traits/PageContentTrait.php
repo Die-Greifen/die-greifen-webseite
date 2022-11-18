@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -75,13 +75,13 @@ trait PageContentTrait
         'template' => 'template',
     ];
 
-    /** @var object */
+    /** @var object|null */
     protected $header;
 
-    /** @var string */
+    /** @var string|null */
     protected $_summary;
 
-    /** @var string */
+    /** @var string|null */
     protected $_content;
 
     /**
@@ -100,6 +100,7 @@ trait PageContentTrait
 
     /**
      * @inheritdoc
+     * @return Header
      */
     public function header($var = null)
     {
@@ -288,7 +289,7 @@ trait PageContentTrait
             'process',
             $var,
             function ($value) {
-                $value = array_replace(Grav::instance()['config']->get('system.pages.process', []), is_array($value) ? $value : []) ?? [];
+                $value = array_replace(Grav::instance()['config']->get('system.pages.process', []), is_array($value) ? $value : []);
                 foreach ($value as $process => $status) {
                     $value[$process] = (bool)$status;
                 }
@@ -664,6 +665,7 @@ trait PageContentTrait
      */
     protected function processContent($content): string
     {
+        $content = is_string($content) ? $content : '';
         $grav = Grav::instance();
 
         /** @var Config $config */
@@ -676,7 +678,6 @@ trait PageContentTrait
         $twig_first = $this->getNestedProperty('header.twig_first') ?? $config->get('system.pages.twig_first', false);
         $never_cache_twig = $this->getNestedProperty('header.never_cache_twig') ?? $config->get('system.pages.never_cache_twig', false);
 
-        $cached = null;
         if ($cache_enable) {
             $cache = $this->getCache('render');
             $key = md5($this->getCacheKey() . '-content');
@@ -688,12 +689,10 @@ trait PageContentTrait
                 if ($process_twig && $never_cache_twig) {
                     $this->_content = $this->processTwig($this->_content);
                 }
-            } else {
-                $cached = null;
             }
         }
 
-        if (!$cached) {
+        if (null === $this->_content) {
             $markdown_options = [];
             if ($process_markdown) {
                 // Build markdown options.
@@ -746,6 +745,7 @@ trait PageContentTrait
                 }
 
                 if ($process_twig) {
+                    \assert(is_string($this->_content));
                     $this->_content = $this->processTwig($this->_content);
                 }
             }
@@ -754,6 +754,8 @@ trait PageContentTrait
                 $this->cachePageContent();
             }
         }
+
+        \assert(is_string($this->_content));
 
         // Handle summary divider
         $delimiter = $config->get('site.summary.delimiter', '===');
@@ -810,10 +812,14 @@ trait PageContentTrait
 
         $keepTwig = (bool)($options['keep_twig'] ?? false);
         if ($keepTwig) {
+            $token = [
+                '/' . Utils::generateRandomString(3),
+                Utils::generateRandomString(3) . '/'
+            ];
             // Base64 encode any twig.
             $content = preg_replace_callback(
-                ['/({#)(.*?)(#})/mu', '/({{)(.*?)(}})/mu', '/({%)(.*?)(%})/mu'],
-                static function ($matches) { return $matches[1] . base64_encode($matches[2]) . $matches[3]; },
+                ['/({#.*?#})/mu', '/({{.*?}})/mu', '/({%.*?%})/mu'],
+                static function ($matches) use ($token) { return $token[0] . base64_encode($matches[1]) . $token[1]; },
                 $content
             );
         }
@@ -823,8 +829,8 @@ trait PageContentTrait
         if ($keepTwig) {
             // Base64 decode the encoded twig.
             $content = preg_replace_callback(
-                ['/({#)(.*?)(#})/mu', '/({{)(.*?)(}})/mu', '/({%)(.*?)(%})/mu'],
-                static function ($matches) { return $matches[1] . base64_decode($matches[2]) . $matches[3]; },
+                ['`' . $token[0] . '([A-Za-z0-9+/]+={0,2})' . $token[1] . '`mu'],
+                static function ($matches) { return base64_decode($matches[1]); },
                 $content
             );
         }

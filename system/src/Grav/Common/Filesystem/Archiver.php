@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Filesystem
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -62,7 +62,7 @@ abstract class Archiver
     {
         // Set infinite PHP execution time if possible.
         if (Utils::functionExists('set_time_limit')) {
-            set_time_limit(0);
+            @set_time_limit(0);
         }
 
         $this->options = $options + $this->options;

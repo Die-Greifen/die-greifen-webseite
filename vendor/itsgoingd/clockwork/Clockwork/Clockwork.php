@@ -15,7 +15,7 @@ use Clockwork\Storage\StorageInterface;
 class Clockwork
 {
 	// Clockwork library version
-	const VERSION = '5.0.6';
+	const VERSION = '5.1.8';
 
 	// Array of data sources, these objects collect metadata for the current application run
 	protected $dataSources = [];
@@ -155,7 +155,7 @@ class Clockwork
 	// Get the log instance for the current request or log a new message
 	public function log($level = null, $message = null, array $context = [])
 	{
-		if ($level && $message) {
+		if ($level) {
 			return $this->request->log()->log($level, $message, $context);
 		}
 
@@ -267,7 +267,7 @@ class Clockwork
 		return $this;
 	}
 
-	// Get an authenitcator implementation
+	// Get an authenticator implementation
 	public function getAuthenticator()
 	{
 		return $this->authenticator;

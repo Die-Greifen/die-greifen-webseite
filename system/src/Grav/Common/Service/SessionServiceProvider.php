@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Service
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -40,21 +40,26 @@ class SessionServiceProvider implements ServiceProviderInterface
 
             // Get session options.
             $enabled = (bool)$config->get('system.session.enabled', false);
-            $cookie_secure = (bool)$config->get('system.session.secure', false);
+            $cookie_secure = $config->get('system.session.secure', false)
+                || ($config->get('system.session.secure_https', true) && $uri->scheme(true) === 'https');
             $cookie_httponly = (bool)$config->get('system.session.httponly', true);
             $cookie_lifetime = (int)$config->get('system.session.timeout', 1800);
+            $cookie_domain = $config->get('system.session.domain');
             $cookie_path = $config->get('system.session.path');
             $cookie_samesite = $config->get('system.session.samesite', 'Lax');
+
+            if (null === $cookie_domain) {
+                $cookie_domain = $uri->host();
+                if ($cookie_domain === 'localhost') {
+                    $cookie_domain = '';
+                }
+            }
+
             if (null === $cookie_path) {
                 $cookie_path = '/' . trim(Uri::filterPath($uri->rootUrl(false)), '/');
             }
             // Session cookie path requires trailing slash.
             $cookie_path = rtrim($cookie_path, '/') . '/';
-
-            $cookie_domain = $uri->host();
-            if ($cookie_domain === 'localhost') {
-                $cookie_domain = '';
-            }
 
             // Activate admin if we're inside the admin path.
             $is_admin = false;

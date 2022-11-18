@@ -60,10 +60,10 @@
             {% set translation = (grav.twig.twig.filters['tu'] is defined ? text|tu : text|t)|trim %}
             <label for="{{ id ~ '_no' }}">{{ (macro.spanToggle(translation, maxLen)|trim)|raw }}</label>
         </div>
-        <span title="{{ directory.description }}">{{ directory.title }}</span>
+        <span title="{{ directory.description|tu }}">{{ directory.title|tu }}</span>
         </div>
     {% endfor %}
     {% else %}
-        <div>No Flex Directories detected</div>
+        <div>{{ 'PLUGIN_FLEX_OBJECTS.ERROR.NO_FLEX_DIRECTORIES'|tu }}</div>
     {% endif %}
 {% endblock %}

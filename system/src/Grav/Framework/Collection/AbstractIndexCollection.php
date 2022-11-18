@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Collection
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -14,14 +14,16 @@ use Closure;
 use Grav\Framework\Compat\Serializable;
 use Grav\Framework\Flex\Interfaces\FlexObjectInterface;
 use InvalidArgumentException;
+use Iterator;
 use function array_key_exists;
 use function array_slice;
 use function count;
 
 /**
  * Abstract Index Collection.
- * @template TKey
+ * @template TKey of array-key
  * @template T
+ * @template C of CollectionInterface
  * @implements CollectionInterface<TKey,T>
  */
 abstract class AbstractIndexCollection implements CollectionInterface
@@ -78,17 +80,17 @@ abstract class AbstractIndexCollection implements CollectionInterface
     /**
      * {@inheritDoc}
      */
+    #[\ReturnTypeWillChange]
     public function key()
     {
-        /** @phpstan-var TKey $key */
-        $key = (string)key($this->entries);
-
-        return $key;
+        /** @phpstan-var TKey */
+        return (string)key($this->entries);
     }
 
     /**
      * {@inheritDoc}
      */
+    #[\ReturnTypeWillChange]
     public function next()
     {
         $value = next($this->entries);
@@ -100,6 +102,7 @@ abstract class AbstractIndexCollection implements CollectionInterface
     /**
      * {@inheritDoc}
      */
+    #[\ReturnTypeWillChange]
     public function current()
     {
         $value = current($this->entries);
@@ -130,7 +133,7 @@ abstract class AbstractIndexCollection implements CollectionInterface
     {
         $key = $this->isAllowedElement($element) ? $this->getCurrentKey($element) : null;
 
-        if (!$key || !isset($this->entries[$key])) {
+        if (null !== $key || !isset($this->entries[$key])) {
             return false;
         }
 
@@ -142,45 +145,64 @@ abstract class AbstractIndexCollection implements CollectionInterface
     /**
      * Required by interface ArrayAccess.
      *
-     * {@inheritDoc}
+     * @param string|int|null $offset
+     * @return bool
+     * @phpstan-param TKey|null $offset
      */
+    #[\ReturnTypeWillChange]
     public function offsetExists($offset)
     {
-        return $this->containsKey($offset);
+        /** @phpstan-ignore-next-line phpstan bug? */
+        return $offset !== null ? $this->containsKey($offset) : false;
     }
 
     /**
      * Required by interface ArrayAccess.
      *
-     * {@inheritDoc}
+     * @param string|int|null $offset
+     * @return mixed
+     * @phpstan-param TKey|null $offset
      */
+    #[\ReturnTypeWillChange]
     public function offsetGet($offset)
     {
-        return $this->get($offset);
+        /** @phpstan-ignore-next-line phpstan bug? */
+        return $offset !== null ? $this->get($offset) : null;
     }
 
     /**
      * Required by interface ArrayAccess.
      *
-     * {@inheritDoc}
+     * @param string|int|null $offset
+     * @param mixed $value
+     * @return void
+     * @phpstan-param TKey|null $offset
      */
+    #[\ReturnTypeWillChange]
     public function offsetSet($offset, $value)
     {
         if (null === $offset) {
             $this->add($value);
+        } else {
+            /** @phpstan-ignore-next-line phpstan bug? */
+            $this->set($offset, $value);
         }
-
-        $this->set($offset, $value);
     }
 
     /**
      * Required by interface ArrayAccess.
      *
-     * {@inheritDoc}
+     * @param string|int|null $offset
+     * @return void
+     * @phpstan-param TKey|null $offset
      */
+    #[\ReturnTypeWillChange]
     public function offsetUnset($offset)
     {
-        return $this->remove($offset);
+        if ($offset !== null) {
+            /** @phpstan-ignore-next-line phpstan bug? */
+            $this->remove($offset);
+        }
     }
 
     /**
@@ -250,6 +272,7 @@ abstract class AbstractIndexCollection implements CollectionInterface
     /**
      * {@inheritDoc}
      */
+    #[\ReturnTypeWillChange]
     public function count()
     {
         return count($this->entries);
@@ -293,7 +316,9 @@ abstract class AbstractIndexCollection implements CollectionInterface
      * Required by interface IteratorAggregate.
      *
      * {@inheritDoc}
+     * @phpstan-return Iterator<TKey,T>
      */
+    #[\ReturnTypeWillChange]
     public function getIterator()
     {
         return new ArrayIterator($this->loadElements());
@@ -336,6 +361,7 @@ abstract class AbstractIndexCollection implements CollectionInterface
      *
      * @return string
      */
+    #[\ReturnTypeWillChange]
     public function __toString()
     {
         return __CLASS__ . '@' . spl_object_hash($this);
@@ -361,6 +387,7 @@ abstract class AbstractIndexCollection implements CollectionInterface
      * @param int $start
      * @param int|null $limit
      * @return static
+     * @phpstan-return static<TKey,T,C>
      */
     public function limit($start, $limit = null)
     {
@@ -371,6 +398,7 @@ abstract class AbstractIndexCollection implements CollectionInterface
      * Reverse the order of the items.
      *
      * @return static
+     * @phpstan-return static<TKey,T,C>
      */
     public function reverse()
     {
@@ -381,13 +409,14 @@ abstract class AbstractIndexCollection implements CollectionInterface
      * Shuffle items.
      *
      * @return static
+     * @phpstan-return static<TKey,T,C>
      */
     public function shuffle()
     {
         $keys = $this->getKeys();
         shuffle($keys);
 
-        return $this->createFrom(array_replace(array_flip($keys), $this->entries) ?? []);
+        return $this->createFrom(array_replace(array_flip($keys), $this->entries));
     }
 
     /**
@@ -397,6 +426,7 @@ abstract class AbstractIndexCollection implements CollectionInterface
      *
      * @param array $keys
      * @return static
+     * @phpstan-return static<TKey,T,C>
      */
     public function select(array $keys)
     {
@@ -415,6 +445,7 @@ abstract class AbstractIndexCollection implements CollectionInterface
      *
      * @param array $keys
      * @return static
+     * @phpstan-return static<TKey,T,C>
      */
     public function unselect(array $keys)
     {
@@ -426,9 +457,11 @@ abstract class AbstractIndexCollection implements CollectionInterface
      *
      * @param int $size     Size of each chunk.
      * @return array
+     * @phpstan-return array<array<TKey,T>>
      */
     public function chunk($size)
     {
+        /** @phpstan-var array<array<TKey,T>> */
         return $this->loadCollection($this->entries)->chunk($size);
     }
 
@@ -456,6 +489,7 @@ abstract class AbstractIndexCollection implements CollectionInterface
      *
      * @return array
      */
+    #[\ReturnTypeWillChange]
     public function jsonSerialize()
     {
         return $this->loadCollection()->jsonSerialize();
@@ -469,6 +503,7 @@ abstract class AbstractIndexCollection implements CollectionInterface
      *
      * @param array $entries Elements.
      * @return static
+     * @phpstan-return static<TKey,T,C>
      */
     protected function createFrom(array $entries)
     {
@@ -521,6 +556,7 @@ abstract class AbstractIndexCollection implements CollectionInterface
     /**
      * @param array|null $entries
      * @return CollectionInterface
+     * @phpstan-return C
      */
     abstract protected function loadCollection(array $entries = null): CollectionInterface;
 

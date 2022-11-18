@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common\Page
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -28,7 +28,7 @@ class Link implements RenderableInterface, MediaLinkInterface
 
     /** @var array */
     protected $attributes = [];
-    /** @var MediaObjectInterface */
+    /** @var MediaObjectInterface|MediaLinkInterface */
     protected $source;
 
     /**
@@ -41,9 +41,7 @@ class Link implements RenderableInterface, MediaLinkInterface
         $this->attributes = $attributes;
 
         $source = $medium->reset()->thumbnail('auto')->display('thumbnail');
-
-        // FIXME: Thumbnail can be null, maybe we should not allow that?
-        if (null === $source) {
+        if (!$source instanceof MediaObjectInterface) {
             throw new RuntimeException('Media has no thumbnail set');
         }
 
@@ -81,6 +79,7 @@ class Link implements RenderableInterface, MediaLinkInterface
      * @param mixed $args
      * @return mixed
      */
+    #[\ReturnTypeWillChange]
     public function __call($method, $args)
     {
         $object = $this->source;
@@ -89,10 +88,15 @@ class Link implements RenderableInterface, MediaLinkInterface
             throw new BadMethodCallException(get_class($object) . '::' . $method . '() not found.');
         }
 
-        $this->source = call_user_func_array($callable, $args);
+        $object = call_user_func_array($callable, $args);
+        if (!$object instanceof MediaLinkInterface) {
+            // Don't start nesting links, if user has multiple link calls in his
+            // actions, we will drop the previous links.
+            return $this;
+        }
 
-        // Don't start nesting links, if user has multiple link calls in his
-        // actions, we will drop the previous links.
-        return $this->source instanceof MediaLinkInterface ? $this->source : $this;
+        $this->source = $object;
+
+        return $object;
     }
 }

@@ -26,6 +26,7 @@ interface ShortcodeInterface
      * Returns associative array(name => value) of shortcode parameters
      *
      * @return array
+     * @psalm-return array<string,string|null>
      */
     public function getParameters();
 
@@ -34,9 +35,9 @@ interface ShortcodeInterface
      * without value
      *
      * @param string $name Parameter name
-     * @param null $default Value returned if there is no parameter with given name
+     * @param string|null $default Value returned if there is no parameter with given name
      *
-     * @return mixed
+     * @return string|null
      */
     public function getParameter($name, $default = null);
 
@@ -53,7 +54,7 @@ interface ShortcodeInterface
      * Returns the so-called "BBCode" fragment when shortcode name is treated
      * like a parameter, eg.: [name="value" /]
      *
-     * @return string
+     * @return string|null
      */
     public function getBbCode();
 }

@@ -231,17 +231,16 @@ class EloquentDataSource extends DataSource
 		// add bindings to query
 		$bindings = $this->databaseManager->connection($connection)->prepareBindings($bindings);
 
-		foreach ($bindings as $binding) {
-			$binding = $this->quoteBinding($binding, $connection);
+		$index = 0;
+		$query = preg_replace_callback('/\?/', function ($matches) use ($bindings, $connection, &$index) {
+			$binding = $this->quoteBinding($bindings[$index++], $connection);
 
 			// convert binary bindings to hexadecimal representation
-			if (! preg_match('//u', $binding)) $binding = '0x' . bin2hex($binding);
+			if (! preg_match('//u', (string) $binding)) $binding = '0x' . bin2hex($binding);
 
 			// escape backslashes in the binding (preg_replace requires to do so)
-			$binding = str_replace('\\', '\\\\', $binding);
-
-			$query = preg_replace('/\?/', $binding, $query, 1);
-		}
+			return (string) $binding;
+		}, $query, count($bindings));
 
 		// highlight keywords
 		$keywords = [
@@ -258,12 +257,18 @@ class EloquentDataSource extends DataSource
 	{
 		$connection = $this->databaseManager->connection($connection);
 
-		if ($connection->getPdo()->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'odbc') {
+		if (! method_exists($connection, 'getPdo')) return;
+
+		$pdo = $connection->getPdo();
+
+		if ($pdo === null) return;
+
+		if ($pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'odbc') {
 			// PDO_ODBC driver doesn't support the quote method, apply simple MSSQL style quoting instead
 			return "'" . str_replace("'", "''", $binding) . "'";
 		}
 
-		return $connection->getPdo()->quote($binding);
+		return is_string($binding) ? $pdo->quote($binding) : $binding;
 	}
 
 	// Increment query counts for collected query

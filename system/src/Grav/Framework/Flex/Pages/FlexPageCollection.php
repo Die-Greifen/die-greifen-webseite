@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * @package    Grav\Framework\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -13,6 +13,7 @@ namespace Grav\Framework\Flex\Pages;
 
 use Grav\Common\Page\Interfaces\PageInterface;
 use Grav\Framework\Flex\FlexCollection;
+use Grav\Framework\Flex\Interfaces\FlexObjectInterface;
 use function array_search;
 use function assert;
 use function is_int;
@@ -20,9 +21,8 @@ use function is_int;
 /**
  * Class FlexPageCollection
  * @package Grav\Plugin\FlexObjects\Types\FlexPages
- * @template TKey
- * @template T of \Grav\Framework\Flex\Interfaces\FlexObjectInterface
- * @extends FlexCollection<TKey,T>
+ * @template T of FlexObjectInterface
+ * @extends FlexCollection<T>
  */
 class FlexPageCollection extends FlexCollection
 {
@@ -53,36 +53,42 @@ class FlexPageCollection extends FlexCollection
     /**
      * @param bool $bool
      * @return static
-     * @phpstan-return static<TKey,T>
+     * @phpstan-return static<T>
      */
     public function withPublished(bool $bool = true)
     {
+        /** @var string[] $list */
         $list = array_keys(array_filter($this->call('isPublished', [$bool])));
 
+        /** @phpstan-var static<T> */
         return $this->select($list);
     }
 
     /**
      * @param bool $bool
      * @return static
-     * @phpstan-return static<TKey,T>
+     * @phpstan-return static<T>
      */
     public function withVisible(bool $bool = true)
     {
+        /** @var string[] $list */
         $list = array_keys(array_filter($this->call('isVisible', [$bool])));
 
+        /** @phpstan-var static<T> */
         return $this->select($list);
     }
 
     /**
      * @param bool $bool
      * @return static
-     * @phpstan-return static<TKey,T>
+     * @phpstan-return static<T>
      */
     public function withRoutable(bool $bool = true)
     {
+        /** @var string[] $list */
         $list = array_keys(array_filter($this->call('isRoutable', [$bool])));
 
+        /** @phpstan-var static<T> */
         return $this->select($list);
     }
 
@@ -149,9 +155,10 @@ class FlexPageCollection extends FlexCollection
     public function adjacentSibling($path, $direction = 1)
     {
         $keys = $this->getKeys();
+        $direction = (int)$direction;
         $pos = array_search($path, $keys, true);
 
-        if ($pos !== false) {
+        if (is_int($pos)) {
             $pos += $direction;
             if (isset($keys[$pos])) {
                 return $this[$keys[$pos]];
@@ -171,7 +178,7 @@ class FlexPageCollection extends FlexCollection
     {
         $pos = array_search($path, $this->getKeys(), true);
 
-        return $pos !== false ? $pos : null;
+        return is_int($pos) ? $pos : null;
     }
 
     /**
@@ -185,7 +192,6 @@ class FlexPageCollection extends FlexCollection
         $keys = $collection->getStorageKeys();
 
         // Assign next free order.
-        /** @var FlexPageObject|null $last */
         $last = null;
         $order = 0;
         foreach ($keys as $folder => $key) {
@@ -197,8 +203,9 @@ class FlexPageCollection extends FlexCollection
             }
         }
 
+        /** @var FlexPageObject|null $last */
         $last = $collection[$last];
 
-        return sprintf('%d.', $last ? $last->value('order') + 1 : 1);
+        return sprintf('%d.', $last ? $last->getFormValue('order') + 1 : 1);
     }
 }

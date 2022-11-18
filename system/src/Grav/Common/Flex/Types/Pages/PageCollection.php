@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * @package    Grav\Common\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -19,7 +19,6 @@ use Grav\Common\Page\Header;
 use Grav\Common\Page\Interfaces\PageCollectionInterface;
 use Grav\Common\Page\Interfaces\PageInterface;
 use Grav\Common\Utils;
-use Grav\Framework\Flex\Interfaces\FlexObjectInterface;
 use Grav\Framework\Flex\Pages\FlexPageCollection;
 use Collator;
 use InvalidArgumentException;
@@ -35,7 +34,9 @@ use function is_string;
  * Class GravPageCollection
  * @package Grav\Plugin\FlexObjects\Types\GravPages
  *
- * @extends FlexPageCollection<string,PageObject>
+ * @template T as PageObject
+ * @extends FlexPageCollection<T>
+ * @implements PageCollectionInterface<string,T>
  *
  * Incompatibilities with Grav\Common\Page\Collection:
  *     $page = $collection->key()       will not work at all
@@ -47,10 +48,6 @@ use function is_string;
  *     $collection->prev()              does not rewind the internal pointer
  * AND most methods are immutable; they do not update the current collection, but return updated one
  *
- * @method static shuffle()
- * @method static select(array $keys)
- * @method static unselect(array $keys)
- * @method static createFrom(array $elements, string $keyField = null)
  * @method PageIndex getIndex()
  */
 class PageCollection extends FlexPageCollection implements PageCollectionInterface
@@ -109,13 +106,11 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
     }
 
     /**
-     * @return PageObject
+     * @return PageInterface
      */
     public function getRoot()
     {
-        $index = $this->getIndex();
-
-        return $index->getRoot();
+        return $this->getIndex()->getRoot();
     }
 
     /**
@@ -155,11 +150,11 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      * Add a single page to a collection
      *
      * @param PageInterface $page
-     * @return static
+     * @return $this
      */
     public function addPage(PageInterface $page)
     {
-        if (!$page instanceof FlexObjectInterface) {
+        if (!$page instanceof PageObject) {
             throw new InvalidArgumentException('$page is not a flex page.');
         }
 
@@ -175,6 +170,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      *
      * @param PageCollectionInterface $collection
      * @return static
+     * @phpstan-return static<T>
      */
     public function merge(PageCollectionInterface $collection)
     {
@@ -186,8 +182,17 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      *
      * @param PageCollectionInterface $collection
      * @return static
+     * @phpstan-return static<T>
      */
     public function intersect(PageCollectionInterface $collection)
+    {
+        throw new RuntimeException(__METHOD__ . '(): Not Implemented');
+    }
+
+    /**
+     * Set current page.
+     */
+    public function setCurrent(string $path): void
     {
         throw new RuntimeException(__METHOD__ . '(): Not Implemented');
     }
@@ -196,7 +201,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      * Return previous item.
      *
      * @return PageInterface|false
-     * @phpstan-return PageObject|false
+     * @phpstan-return T|false
      */
     public function prev()
     {
@@ -211,7 +216,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      * Return nth item.
      * @param int $key
      * @return PageInterface|bool
-     * @phpstan-return PageObject|false
+     * @phpstan-return T|false
      */
     public function nth($key)
     {
@@ -223,6 +228,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      *
      * @param int $num Specifies how many entries should be picked.
      * @return static
+     * @phpstan-return static<T>
      */
     public function random($num = 1)
     {
@@ -234,6 +240,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      *
      * @param array $items Items to be appended. Existing keys will be overridden with the new values.
      * @return static
+     * @phpstan-return static<T>
      */
     public function append($items)
     {
@@ -245,6 +252,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      *
      * @param int $size
      * @return static[]
+     * @phpstan-return static<T>[]
      */
     public function batch($size): array
     {
@@ -266,6 +274,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      * @param array|null  $manual
      * @param int|null $sort_flags
      * @return static
+     * @phpstan-return static<T>
      */
     public function order($by, $dir = 'asc', $manual = null, $sort_flags = null)
     {
@@ -326,7 +335,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
                     $list[$key] = $child->slug();
                     break;
                 case 'basename':
-                    $list[$key] = basename($key);
+                    $list[$key] = Utils::basename($key);
                     break;
                 case 'folder':
                     $list[$key] = $child->folder();
@@ -392,8 +401,8 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
             $i = count($manual);
             $new_list = [];
             foreach ($list as $key => $dummy) {
-                $child = $this[$key];
-                $order = array_search($child->slug, $manual, true);
+                $child = $this[$key] ?? null;
+                $order = $child ? array_search($child->slug, $manual, true) : false;
                 if ($order === false) {
                     $order = $i++;
                 }
@@ -426,20 +435,21 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
 
     /**
      * Returns the items between a set of date ranges of either the page date field (default) or
-     * an arbitrary datetime page field where end date is optional
-     * Dates can be passed in as text that strtotime() can process
+     * an arbitrary datetime page field where start date and end date are optional
+     * Dates must be passed in as text that strtotime() can process
      * http://php.net/manual/en/function.strtotime.php
      *
-     * @param string $startDate
-     * @param string|false $endDate
+     * @param string|null $startDate
+     * @param string|null $endDate
      * @param string|null $field
      * @return static
+     * @phpstan-return static<T>
      * @throws Exception
      */
-    public function dateRange($startDate, $endDate = false, $field = null)
+    public function dateRange($startDate = null, $endDate = null, $field = null)
     {
-        $start = Utils::date2timestamp($startDate);
-        $end = $endDate ? Utils::date2timestamp($endDate) : false;
+        $start = $startDate ? Utils::date2timestamp($startDate) : null;
+        $end = $endDate ? Utils::date2timestamp($endDate) : null;
 
         $entries = [];
         foreach ($this as $key => $object) {
@@ -449,7 +459,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
 
             $date = $field ? strtotime($object->getNestedProperty($field)) : $object->date();
 
-            if ($date >= $start && (!$end || $date <= $end)) {
+            if ((!$start || $date >= $start) && (!$end || $date <= $end)) {
                 $entries[$key] = $object;
             }
         }
@@ -461,6 +471,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      * Creates new collection with only visible pages
      *
      * @return static The collection with only visible pages
+     * @phpstan-return static<T>
      */
     public function visible()
     {
@@ -478,6 +489,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      * Creates new collection with only non-visible pages
      *
      * @return static The collection with only non-visible pages
+     * @phpstan-return static<T>
      */
     public function nonVisible()
     {
@@ -495,6 +507,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      * Creates new collection with only pages
      *
      * @return static The collection with only pages
+     * @phpstan-return static<T>
      */
     public function pages()
     {
@@ -516,6 +529,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      * Creates new collection with only modules
      *
      * @return static The collection with only modules
+     * @phpstan-return static<T>
      */
     public function modules()
     {
@@ -537,6 +551,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      * Alias of modules()
      *
      * @return static
+     * @phpstan-return static<T>
      */
     public function modular()
     {
@@ -547,6 +562,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      * Alias of pages()
      *
      * @return static
+     * @phpstan-return static<T>
      */
     public function nonModular()
     {
@@ -557,6 +573,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      * Creates new collection with only published pages
      *
      * @return static The collection with only published pages
+     * @phpstan-return static<T>
      */
     public function published()
     {
@@ -574,6 +591,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      * Creates new collection with only non-published pages
      *
      * @return static The collection with only non-published pages
+     * @phpstan-return static<T>
      */
     public function nonPublished()
     {
@@ -591,6 +609,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      * Creates new collection with only routable pages
      *
      * @return static The collection with only routable pages
+     * @phpstan-return static<T>
      */
     public function routable()
     {
@@ -608,6 +627,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      * Creates new collection with only non-routable pages
      *
      * @return static The collection with only non-routable pages
+     * @phpstan-return static<T>
      */
     public function nonRoutable()
     {
@@ -626,6 +646,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      *
      * @param string $type
      * @return static The collection
+     * @phpstan-return static<T>
      */
     public function ofType($type)
     {
@@ -644,6 +665,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      *
      * @param string[] $types
      * @return static The collection
+     * @phpstan-return static<T>
      */
     public function ofOneOfTheseTypes($types)
     {
@@ -662,6 +684,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      *
      * @param array $accessLevels
      * @return static The collection
+     * @phpstan-return static<T>
      */
     public function ofOneOfTheseAccessLevels($accessLevels)
     {
@@ -703,6 +726,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
     /**
      * @param bool $bool
      * @return static
+     * @phpstan-return static<T>
      */
     public function withOrdered(bool $bool = true)
     {
@@ -714,6 +738,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
     /**
      * @param bool $bool
      * @return static
+     * @phpstan-return static<T>
      */
     public function withModules(bool $bool = true)
     {
@@ -725,6 +750,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
     /**
      * @param bool $bool
      * @return static
+     * @phpstan-return static<T>
      */
     public function withPages(bool $bool = true)
     {
@@ -738,12 +764,23 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      * @param string|null $languageCode
      * @param bool|null $fallback
      * @return static
+     * @phpstan-return static<T>
      */
     public function withTranslation(bool $bool = true, string $languageCode = null, bool $fallback = null)
     {
         $list = array_keys(array_filter($this->call('hasTranslation', [$languageCode, $fallback])));
 
         return $bool ? $this->select($list) : $this->unselect($list);
+    }
+
+    /**
+     * @param string|null $languageCode
+     * @param bool|null $fallback
+     * @return PageIndex
+     */
+    public function withTranslated(string $languageCode = null, bool $fallback = null)
+    {
+        return $this->getIndex()->withTranslated($languageCode, $fallback);
     }
 
     /**
@@ -761,6 +798,7 @@ class PageCollection extends FlexPageCollection implements PageCollectionInterfa
      * @param array $filters
      * @param bool $recursive
      * @return static
+     * @phpstan-return static<T>
      */
     public function filterBy(array $filters, bool $recursive = false)
     {

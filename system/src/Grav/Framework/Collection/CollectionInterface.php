@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Collection
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -16,7 +16,7 @@ use JsonSerializable;
  * Collection Interface.
  *
  * @package Grav\Framework\Collection
- * @template TKey
+ * @template TKey of array-key
  * @template T
  * @extends Collection<TKey,T>
  */
@@ -26,7 +26,7 @@ interface CollectionInterface extends Collection, JsonSerializable
      * Reverse the order of the items.
      *
      * @return CollectionInterface
-     * @phpstan-return CollectionInterface<TKey,T>
+     * @phpstan-return static<TKey,T>
      */
     public function reverse();
 
@@ -34,7 +34,7 @@ interface CollectionInterface extends Collection, JsonSerializable
      * Shuffle items.
      *
      * @return CollectionInterface
-     * @phpstan-return CollectionInterface<TKey,T>
+     * @phpstan-return static<TKey,T>
      */
     public function shuffle();
 
@@ -43,6 +43,7 @@ interface CollectionInterface extends Collection, JsonSerializable
      *
      * @param int $size     Size of each chunk.
      * @return array
+     * @phpstan-return array<array<TKey,T>>
      */
     public function chunk($size);
 
@@ -53,7 +54,7 @@ interface CollectionInterface extends Collection, JsonSerializable
      *
      * @param array<int|string> $keys
      * @return CollectionInterface
-     * @phpstan-return CollectionInterface<TKey,T>
+     * @phpstan-return static<TKey,T>
      */
     public function select(array $keys);
 
@@ -62,7 +63,7 @@ interface CollectionInterface extends Collection, JsonSerializable
      *
      * @param array<int|string> $keys
      * @return CollectionInterface
-     * @phpstan-return CollectionInterface<TKey,T>
+     * @phpstan-return static<TKey,T>
      */
     public function unselect(array $keys);
 }

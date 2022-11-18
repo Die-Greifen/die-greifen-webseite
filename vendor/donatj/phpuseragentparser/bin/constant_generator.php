@@ -2,15 +2,15 @@
 
 require __DIR__ . '/../vendor/autoload.php';
 
-$jsonfile = __DIR__ . '/../tests/user_agents.json';
+$jsonfile = __DIR__ . '/../tests/user_agents.dist.json';
 
 $uas = json_decode(
 	file_get_contents($jsonfile),
 	true
 );
 
-$platforms = array();
-$browsers  = array();
+$platforms = [];
+$browsers  = [];
 foreach( $uas as $key => $val ) {
 	$kex = strtoupper($val['browser']);
 	if( $kex !== '' ) {
@@ -22,7 +22,7 @@ foreach( $uas as $key => $val ) {
 		$browsers[$kex][$val['browser']]++;
 	}
 
-	$kex = strtoupper($val['platform']);
+	$kex = strtoupper((string)$val['platform']);
 	if( $kex !== '' ) {
 		$kex = preg_replace('/\W+/', '_', $kex);
 

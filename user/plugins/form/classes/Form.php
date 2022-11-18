@@ -1,4 +1,5 @@
 <?php
+
 namespace Grav\Plugin\Form;
 
 use ArrayAccess;
@@ -12,6 +13,7 @@ use Grav\Common\Grav;
 use Grav\Common\Inflector;
 use Grav\Common\Language\Language;
 use Grav\Common\Page\Interfaces\PageInterface;
+use Grav\Common\Page\Pages;
 use Grav\Common\Security;
 use Grav\Common\Uri;
 use Grav\Common\Utils;
@@ -117,7 +119,7 @@ class Form implements FormInterface, ArrayAccess
             $this->items = $form;
         } else {
             // Otherwise get all forms in the page.
-            $forms = $page->forms();
+            $forms = $page->getForms();
             if ($name) {
                 // If form with given name was found, use that.
                 $this->items = $forms[$name] ?? [];
@@ -160,6 +162,10 @@ class Form implements FormInterface, ArrayAccess
 
         if (empty($this->items['nonce']['action'])) {
             $this->items['nonce']['action'] = 'form';
+        }
+
+        if (Utils::isPositive($this->items['disabled'] ?? false)) {
+            $this->disable();
         }
 
         // Initialize form properties.
@@ -390,11 +396,21 @@ class Form implements FormInterface, ArrayAccess
     /**
      * Return page object for the form.
      *
+     * Can be called only after onPageInitialize event has fired.
+     *
      * @return PageInterface
+     * @throws \LogicException
      */
     public function getPage(): PageInterface
     {
-        return Grav::instance()['pages']->dispatch($this->page);
+        /** @var Pages $pages */
+        $pages = Grav::instance()['pages'];
+        $page = $pages->find($this->page);
+        if (null === $page) {
+            throw new \LogicException('Form::getPage() method was called too early!');
+        }
+
+        return $page;
     }
 
     /**
@@ -915,6 +931,11 @@ class Form implements FormInterface, ArrayAccess
                     $data = $data[$action];
                 }
 
+                // do not execute action, if deactivated
+                if (false === $data) {
+                    continue;
+                }
+
                 $event = new Event(['form' => $this, 'action' => $action, 'params' => $data]);
                 $grav->fireEvent('onFormProcessed', $event);
 
@@ -1106,11 +1127,11 @@ class Form implements FormInterface, ArrayAccess
     }
 
     /**
-     * @param string $field
-     * @param string $filename
+     * @param string|null $field
+     * @param string|null $filename
      * @return Route|null
      */
-    public function getFileDeleteAjaxRoute($field, $filename): ?Route
+    public function getFileDeleteAjaxRoute($field = null, $filename = null): ?Route
     {
         $route = Uri::getCurrentRoute()->withExtension('json')->withGravParam('task', 'file-remove');
 

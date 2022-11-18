@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Object
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -97,7 +97,7 @@ trait ArrayPropertyTrait
      */
     protected function getElements()
     {
-        return array_filter($this->_elements, function ($val) {
+        return array_filter($this->_elements, static function ($val) {
             return $val !== null;
         });
     }

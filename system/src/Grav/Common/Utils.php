@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -12,11 +12,16 @@ namespace Grav\Common;
 use DateTime;
 use DateTimeZone;
 use Exception;
+use Grav\Common\Flex\Types\Pages\PageObject;
 use Grav\Common\Helpers\Truncator;
 use Grav\Common\Page\Interfaces\PageInterface;
 use Grav\Common\Markdown\Parsedown;
 use Grav\Common\Markdown\ParsedownExtra;
 use Grav\Common\Page\Markdown\Excerpts;
+use Grav\Common\Page\Pages;
+use Grav\Framework\Flex\Flex;
+use Grav\Framework\Flex\Interfaces\FlexObjectInterface;
+use Grav\Framework\Media\Interfaces\MediaInterface;
 use InvalidArgumentException;
 use Negotiation\Accept;
 use Negotiation\Negotiator;
@@ -40,7 +45,7 @@ use function strlen;
  */
 abstract class Utils
 {
-    /** @var array  */
+    /** @var array */
     protected static $nonces = [];
 
     protected const ROOTURL_REGEX = '{^((?:http[s]?:\/\/[^\/]+)|(?:\/\/[^\/]+))(.*)}';
@@ -78,6 +83,7 @@ abstract class Utils
 
         $resource = false;
         if (static::contains((string)$input, '://')) {
+            // Url contains a scheme (https:// , user:// etc).
             /** @var UniformResourceLocator $locator */
             $locator = $grav['locator'];
 
@@ -129,14 +135,23 @@ abstract class Utils
                 $resource = $locator->findResource($input, false);
             }
         } else {
-            $root = $uri->rootUrl();
+            // Just a path.
+            /** @var Pages $pages */
+            $pages = $grav['pages'];
 
-            if (static::startsWith($input, $root)) {
-                $input = static::replaceFirstOccurrence($root, '', $input);
+            // Is this a page?
+            $page = $pages->find($input, true);
+            if ($page && $page->routable()) {
+                return $page->url($domain);
+            }
+
+            $root = preg_quote($uri->rootUrl(), '#');
+            $pattern = '#(' . $root . '$|' . $root . '/)#';
+            if (!empty($root) && preg_match($pattern, $input, $matches)) {
+                $input = static::replaceFirstOccurrence($matches[0], '', $input);
             }
 
             $input = ltrim($input, '/');
-
             $resource = $input;
         }
 
@@ -146,7 +161,7 @@ abstract class Utils
 
         $domain = $domain ?: $grav['config']->get('system.absolute_urls', false);
 
-        return rtrim($uri->rootUrl($domain), '/') . '/' . ($resource ?? '');
+        return rtrim($uri->rootUrl($domain), '/') . '/' . ($resource ?: '');
     }
 
     /**
@@ -162,9 +177,9 @@ abstract class Utils
 
         if ($locator->isStream($path)) {
             $path = $locator->findResource($path, true);
-        } elseif (!Utils::startsWith($path, GRAV_ROOT)) {
+        } elseif (!static::startsWith($path, GRAV_ROOT)) {
             $base_url = Grav::instance()['base_url'];
-            $path = GRAV_ROOT . '/' . ltrim(Utils::replaceFirstOccurrence($base_url, '', $path), '/');
+            $path = GRAV_ROOT . '/' . ltrim(static::replaceFirstOccurrence($base_url, '', $path), '/');
         }
 
         return $path;
@@ -174,8 +189,8 @@ abstract class Utils
     /**
      * Check if the $haystack string starts with the substring $needle
      *
-     * @param  string $haystack
-     * @param  string|string[] $needle
+     * @param string $haystack
+     * @param string|string[] $needle
      * @param bool $case_sensitive
      * @return bool
      */
@@ -198,8 +213,8 @@ abstract class Utils
     /**
      * Check if the $haystack string ends with the substring $needle
      *
-     * @param  string $haystack
-     * @param  string|string[] $needle
+     * @param string $haystack
+     * @param string|string[] $needle
      * @param bool $case_sensitive
      * @return bool
      */
@@ -223,9 +238,9 @@ abstract class Utils
     /**
      * Check if the $haystack string contains the substring $needle
      *
-     * @param  string $haystack
-     * @param  string|string[] $needle
-     * @param  bool $case_sensitive
+     * @param string $haystack
+     * @param string|string[] $needle
+     * @param bool $case_sensitive
      * @return bool
      */
     public static function contains($haystack, $needle, $case_sensitive = true)
@@ -262,19 +277,19 @@ abstract class Utils
     {
         $regex = str_replace(
             array("\*", "\?"), // wildcard chars
-            array('.*','.'),   // regexp chars
+            array('.*', '.'),   // regexp chars
             preg_quote($wildcard_pattern, '/')
         );
 
-        return preg_match('/^'.$regex.'$/is', $haystack);
+        return preg_match('/^' . $regex . '$/is', $haystack);
     }
 
     /**
      * Render simple template filling up the variables in it. If value is not defined, leave it as it was.
      *
-     * @param string $template      Template string
-     * @param array $variables      Variables with values
-     * @param array $brackets       Optional array of opening and closing brackets or symbols
+     * @param string $template Template string
+     * @param array $variables Variables with values
+     * @param array $brackets Optional array of opening and closing brackets or symbols
      * @return string               Final string filled with values
      */
     public static function simpleTemplate(string $template, array $variables, array $brackets = ['{', '}']): string
@@ -372,8 +387,8 @@ abstract class Utils
     /**
      * Merge two objects into one.
      *
-     * @param  object $obj1
-     * @param  object $obj2
+     * @param object $obj1
+     * @param object $obj2
      *
      * @return object
      */
@@ -411,7 +426,7 @@ abstract class Utils
      */
     public static function arrayRemoveValue(array $search, $value)
     {
-        foreach ((array) $value as $val) {
+        foreach ((array)$value as $val) {
             $key = array_search($val, $search);
             if ($key !== false) {
                 unset($search[$key]);
@@ -477,8 +492,8 @@ abstract class Utils
     /**
      * Array combine but supports different array lengths
      *
-     * @param  array $arr1
-     * @param  array $arr2
+     * @param array $arr1
+     * @param array $arr2
      * @return array|false
      */
     public static function arrayCombine($arr1, $arr2)
@@ -491,7 +506,7 @@ abstract class Utils
     /**
      * Array is associative or not
      *
-     * @param  array $arr
+     * @param array $arr
      * @return bool
      */
     public static function arrayIsAssociative($arr)
@@ -513,15 +528,15 @@ abstract class Utils
         $now = new DateTime();
 
         $date_formats = [
-            'd-m-Y H:i' => 'd-m-Y H:i (e.g. '.$now->format('d-m-Y H:i').')',
-            'Y-m-d H:i' => 'Y-m-d H:i (e.g. '.$now->format('Y-m-d H:i').')',
-            'm/d/Y h:i a' => 'm/d/Y h:i a (e.g. '.$now->format('m/d/Y h:i a').')',
-            'H:i d-m-Y' => 'H:i d-m-Y (e.g. '.$now->format('H:i d-m-Y').')',
-            'h:i a m/d/Y' => 'h:i a m/d/Y (e.g. '.$now->format('h:i a m/d/Y').')',
-            ];
+            'd-m-Y H:i' => 'd-m-Y H:i (e.g. ' . $now->format('d-m-Y H:i') . ')',
+            'Y-m-d H:i' => 'Y-m-d H:i (e.g. ' . $now->format('Y-m-d H:i') . ')',
+            'm/d/Y h:i a' => 'm/d/Y h:i a (e.g. ' . $now->format('m/d/Y h:i a') . ')',
+            'H:i d-m-Y' => 'H:i d-m-Y (e.g. ' . $now->format('H:i d-m-Y') . ')',
+            'h:i a m/d/Y' => 'h:i a m/d/Y (e.g. ' . $now->format('h:i a m/d/Y') . ')',
+        ];
         $default_format = Grav::instance()['config']->get('system.pages.dateformat.default');
         if ($default_format) {
-            $date_formats = array_merge([$default_format => $default_format.' (e.g. '.$now->format($default_format).')'], $date_formats);
+            $date_formats = array_merge([$default_format => $default_format . ' (e.g. ' . $now->format($default_format) . ')'], $date_formats);
         }
 
         return $date_formats;
@@ -548,11 +563,11 @@ abstract class Utils
     /**
      * Truncate text by number of characters but can cut off words.
      *
-     * @param  string $string
-     * @param  int    $limit       Max number of characters.
-     * @param  bool   $up_to_break truncate up to breakpoint after char count
-     * @param  string $break       Break point.
-     * @param  string $pad         Appended padding to the end of the string.
+     * @param string $string
+     * @param int $limit Max number of characters.
+     * @param bool $up_to_break truncate up to breakpoint after char count
+     * @param string $break Break point.
+     * @param string $pad Appended padding to the end of the string.
      * @return string
      */
     public static function truncate($string, $limit = 150, $up_to_break = false, $break = ' ', $pad = '&hellip;')
@@ -578,7 +593,7 @@ abstract class Utils
      * Truncate text by number of characters in a "word-safe" manor.
      *
      * @param string $string
-     * @param int    $limit
+     * @param int $limit
      * @return string
      */
     public static function safeTruncate($string, $limit = 150)
@@ -590,9 +605,9 @@ abstract class Utils
     /**
      * Truncate HTML by number of characters. not "word-safe"!
      *
-     * @param  string $text
-     * @param  int $length in characters
-     * @param  string $ellipsis
+     * @param string $text
+     * @param int $length in characters
+     * @param string $ellipsis
      * @return string
      */
     public static function truncateHtml($text, $length = 100, $ellipsis = '...')
@@ -603,9 +618,9 @@ abstract class Utils
     /**
      * Truncate HTML by number of characters in a "word-safe" manor.
      *
-     * @param  string $text
-     * @param  int    $length in words
-     * @param  string $ellipsis
+     * @param string $text
+     * @param int $length in words
+     * @param string $ellipsis
      * @return string
      */
     public static function safeTruncateHtml($text, $length = 25, $ellipsis = '...')
@@ -625,28 +640,45 @@ abstract class Utils
     }
 
     /**
+     * Generates a random string with configurable length, prefix and suffix.
+     * Unlike the built-in `uniqid()`, this string is non-conflicting and safe
+     *
+     * @param int $length
+     * @param array $options
+     * @return string
+     * @throws Exception
+     */
+    public static function uniqueId(int $length = 13, array $options = []): string
+    {
+        $options = array_merge(['prefix' => '', 'suffix' => ''], $options);
+        $bytes = random_bytes(ceil($length / 2));
+
+        return $options['prefix'] . substr(bin2hex($bytes), 0, $length) . $options['suffix'];
+    }
+
+    /**
      * Provides the ability to download a file to the browser
      *
      * @param string $file the full path to the file to be downloaded
      * @param bool $force_download as opposed to letting browser choose if to download or render
-     * @param int $sec      Throttling, try 0.1 for some speed throttling of downloads
-     * @param int $bytes    Size of chunks to send in bytes. Default is 1024
+     * @param int $sec Throttling, try 0.1 for some speed throttling of downloads
+     * @param int $bytes Size of chunks to send in bytes. Default is 1024
+     * @param array $options Extra options: [mime, download_name, expires]
      * @throws Exception
      */
-    public static function download($file, $force_download = true, $sec = 0, $bytes = 1024)
+    public static function download($file, $force_download = true, $sec = 0, $bytes = 1024, array $options = [])
     {
+        $grav = Grav::instance();
+
         if (file_exists($file)) {
             // fire download event
-            Grav::instance()->fireEvent('onBeforeDownload', new Event(['file' => $file]));
+            $grav->fireEvent('onBeforeDownload', new Event(['file' => $file, 'options' => &$options]));
 
-            $file_parts = pathinfo($file);
-            $mimetype = static::getMimeByExtension($file_parts['extension']);
-            $size   = filesize($file); // File size
+            $file_parts = static::pathinfo($file);
+            $mimetype = $options['mime'] ?? static::getMimeByExtension($file_parts['extension']);
+            $size = filesize($file); // File size
 
-            // clean all buffers
-            while (ob_get_level()) {
-                ob_end_clean();
-            }
+            $grav->cleanOutputBuffers();
 
             // required for IE, otherwise Content-Disposition may be ignored
             if (ini_get('zlib.output_compression')) {
@@ -658,7 +690,7 @@ abstract class Utils
 
             if ($force_download) {
                 // output the regular HTTP headers
-                header('Content-Disposition: attachment; filename="' . $file_parts['basename'] . '"');
+                header('Content-Disposition: attachment; filename="' . ($options['download_name'] ?? $file_parts['basename']) . '"');
             }
 
             // multipart-download and download resuming support
@@ -681,8 +713,8 @@ abstract class Utils
                 $new_length = $size;
                 header('Content-Length: ' . $size);
 
-                if (Grav::instance()['config']->get('system.cache.enabled')) {
-                    $expires = Grav::instance()['config']->get('system.pages.expires');
+                if ($grav['config']->get('system.cache.enabled')) {
+                    $expires = $options['expires'] ?? $grav['config']->get('system.pages.expires');
                     if ($expires > 0) {
                         $expires_date = gmdate('D, d M Y H:i:s T', time() + $expires);
                         header('Cache-Control: max-age=' . $expires);
@@ -738,7 +770,7 @@ abstract class Utils
         // Set from uri extension
         $uri_extension = $uri->extension();
         if (is_string($uri_extension) && $uri->isValidExtension($uri_extension)) {
-            return($uri_extension);
+            return ($uri_extension);
         }
 
         // Use content negotiation via the `accept:` header
@@ -746,13 +778,13 @@ abstract class Utils
         if (is_string($http_accept)) {
             $negotiator = new Negotiator();
 
-            $supported_types = Utils::getSupportPageTypes(['html', 'json']);
-            $priorities = Utils::getMimeTypes($supported_types);
+            $supported_types = static::getSupportPageTypes(['html', 'json']);
+            $priorities = static::getMimeTypes($supported_types);
 
             $media_type = $negotiator->getBest($http_accept, $priorities);
             $mimetype = $media_type instanceof Accept ? $media_type->getValue() : '';
 
-            return Utils::getExtensionByMime($mimetype);
+            return static::getExtensionByMime($mimetype);
         }
 
         return 'html';
@@ -787,13 +819,7 @@ abstract class Utils
 
         $media_types = Grav::instance()['config']->get('media.types');
 
-        if (isset($media_types[$extension])) {
-            if (isset($media_types[$extension]['mime'])) {
-                return $media_types[$extension]['mime'];
-            }
-        }
-
-        return $default;
+        return $media_types[$extension]['mime'] ?? $default;
     }
 
     /**
@@ -814,6 +840,31 @@ abstract class Utils
         return $mimetypes;
     }
 
+    /**
+     * Return all extensions for given mimetype. The first extension is the default one.
+     *
+     * @param string $mime Mime type (eg 'image/jpeg')
+     * @return string[] List of extensions eg. ['jpg', 'jpe', 'jpeg']
+     */
+    public static function getExtensionsByMime($mime)
+    {
+        $mime = strtolower($mime);
+
+        $media_types = (array)Grav::instance()['config']->get('media.types');
+
+        $list = [];
+        foreach ($media_types as $extension => $type) {
+            if ($extension === '' || $extension === 'defaults') {
+                continue;
+            }
+
+            if (isset($type['mime']) && $type['mime'] === $mime) {
+                $list[] = $extension;
+            }
+        }
+
+        return $list;
+    }
 
     /**
      * Return the mimetype based on filename extension
@@ -884,7 +935,7 @@ abstract class Utils
      */
     public static function getMimeByFilename($filename, $default = 'application/octet-stream')
     {
-        return static::getMimeByExtension(pathinfo($filename, PATHINFO_EXTENSION), $default);
+        return static::getMimeByExtension(static::pathinfo($filename, PATHINFO_EXTENSION), $default);
     }
 
     /**
@@ -929,7 +980,7 @@ abstract class Utils
     public static function checkFilename($filename)
     {
         $dangerous_extensions = Grav::instance()['config']->get('security.uploads_dangerous_extensions', []);
-        $extension = pathinfo($filename, PATHINFO_EXTENSION);
+        $extension = static::pathinfo($filename, PATHINFO_EXTENSION);
 
         return !(
             // Empty filenames are not allowed.
@@ -941,6 +992,46 @@ abstract class Utils
             // File extension should not be part of configured dangerous extensions
             || in_array($extension, $dangerous_extensions)
         );
+    }
+
+    /**
+     * Unicode-safe version of PHP’s pathinfo() function.
+     *
+     * @link  https://www.php.net/manual/en/function.pathinfo.php
+     *
+     * @param string $path
+     * @param int|null $flags
+     * @return array|string
+     */
+    public static function pathinfo($path, int $flags = null)
+    {
+        $path = str_replace(['%2F', '%5C'], ['/', '\\'], rawurlencode($path));
+
+        if (null === $flags) {
+            $info = pathinfo($path);
+        } else {
+            $info = pathinfo($path, $flags);
+        }
+
+        if (is_array($info)) {
+            return array_map('rawurldecode', $info);
+        }
+
+        return rawurldecode($info);
+    }
+
+    /**
+     * Unicode-safe version of the PHP basename() function.
+     *
+     * @link  https://www.php.net/manual/en/function.basename.php
+     *
+     * @param string $path
+     * @param string $suffix
+     * @return string
+     */
+    public static function basename($path, string $suffix = ''): string
+    {
+        return rawurldecode(basename(str_replace(['%2F', '%5C'], '/', rawurlencode($path)), $suffix));
     }
 
     /**
@@ -1056,7 +1147,7 @@ abstract class Utils
 
             $pretty_offset = "UTC${offset_prefix}${offset_formatted}";
 
-            $timezone_list[$timezone] = "(${pretty_offset}) ".str_replace('_', ' ', $timezone);
+            $timezone_list[$timezone] = "(${pretty_offset}) " . str_replace('_', ' ', $timezone);
         }
 
         return $timezone_list;
@@ -1065,11 +1156,11 @@ abstract class Utils
     /**
      * Recursively filter an array, filtering values by processing them through the $fn function argument
      *
-     * @param array    $source the Array to filter
-     * @param callable $fn     the function to pass through each array item
+     * @param array $source the Array to filter
+     * @param callable $fn the function to pass through each array item
      * @return array
      */
-    public static function arrayFilterRecursive(Array $source, $fn)
+    public static function arrayFilterRecursive(array $source, $fn)
     {
         $result = [];
         foreach ($source as $key => $value) {
@@ -1084,6 +1175,29 @@ abstract class Utils
         }
 
         return $result;
+    }
+
+    /**
+     * Flatten a multi-dimensional associative array into query params.
+     *
+     * @param array $array
+     * @param string $prepend
+     * @return array
+     */
+    public static function arrayToQueryParams($array, $prepend = '')
+    {
+        $results = [];
+        foreach ($array as $key => $value) {
+            $name = $prepend ? $prepend . '[' . $key . ']' : $key;
+
+            if (is_array($value)) {
+                $results = array_merge($results, static::arrayToQueryParams($value, $name));
+            } else {
+                $results[$name] = $value;
+            }
+        }
+
+        return $results;
     }
 
     /**
@@ -1111,8 +1225,8 @@ abstract class Utils
     /**
      * Flatten a multi-dimensional associative array into dot notation
      *
-     * @param  array   $array
-     * @param  string  $prepend
+     * @param array $array
+     * @param string $prepend
      * @return array
      */
     public static function arrayFlattenDotNotation($array, $prepend = '')
@@ -1120,9 +1234,9 @@ abstract class Utils
         $results = array();
         foreach ($array as $key => $value) {
             if (is_array($value)) {
-                $results = array_merge($results, static::arrayFlattenDotNotation($value, $prepend.$key.'.'));
+                $results = array_merge($results, static::arrayFlattenDotNotation($value, $prepend . $key . '.'));
             } else {
-                $results[$prepend.$key] = $value;
+                $results[$prepend . $key] = $value;
             }
         }
 
@@ -1196,7 +1310,6 @@ abstract class Utils
         if (count($parts) > 0 && in_array($parts[0], $languages_enabled)) {
             return $parts[0];
         }
-
         return false;
     }
 
@@ -1271,7 +1384,7 @@ abstract class Utils
      * with reverse proxy setups.
      *
      * @param string $action
-     * @param bool   $previousTick if true, generates the token for the previous tick (the previous 12 hours)
+     * @param bool $previousTick if true, generates the token for the previous tick (the previous 12 hours)
      * @return string the nonce string
      */
     private static function generateNonceString($action, $previousTick = false)
@@ -1308,8 +1421,8 @@ abstract class Utils
      * Creates a hashed nonce tied to the passed action. Tied to the current user and time. The nonce for a given
      * action is the same for 12 hours.
      *
-     * @param string $action      the action the nonce is tied to (e.g. save-user-admin or move-page-homepage)
-     * @param bool   $previousTick if true, generates the token for the previous tick (the previous 12 hours)
+     * @param string $action the action the nonce is tied to (e.g. save-user-admin or move-page-homepage)
+     * @param bool $previousTick if true, generates the token for the previous tick (the previous 12 hours)
      * @return string the nonce
      */
     public static function getNonce($action, $previousTick = false)
@@ -1327,7 +1440,7 @@ abstract class Utils
     /**
      * Verify the passed nonce for the give action
      *
-     * @param string|string[] $nonce  the nonce to verify
+     * @param string|string[] $nonce the nonce to verify
      * @param string $action the action to verify the nonce to
      * @return boolean verified or not
      */
@@ -1344,9 +1457,7 @@ abstract class Utils
         }
 
         //Nonce generated 12-24 hours ago
-        $previousTick = true;
-
-        return $nonce === self::getNonce($action, $previousTick);
+        return $nonce === self::getNonce($action, true);
     }
 
     /**
@@ -1356,11 +1467,7 @@ abstract class Utils
      */
     public static function isAdminPlugin()
     {
-        if (isset(Grav::instance()['admin'])) {
-            return true;
-        }
-
-        return false;
+        return isset(Grav::instance()['admin']);
     }
 
     /**
@@ -1414,7 +1521,7 @@ abstract class Utils
         while (count($keys) > 1) {
             $key = array_shift($keys);
 
-            if (! isset($array[$key]) || ! is_array($array[$key])) {
+            if (!isset($array[$key]) || !is_array($array[$key])) {
                 $array[$key] = array();
             }
 
@@ -1498,7 +1605,7 @@ abstract class Utils
     }
 
     /**
-     * Get path based on a token
+     * Get relative page path based on a token.
      *
      * @param string $path
      * @param PageInterface|null $page
@@ -1507,47 +1614,122 @@ abstract class Utils
      */
     public static function getPagePathFromToken($path, PageInterface $page = null)
     {
-        $path_parts = pathinfo($path);
-        $grav       = Grav::instance();
+        return static::getPathFromToken($path, $page);
+    }
 
-        $basename = '';
-        if (isset($path_parts['extension'])) {
-            $basename = '/' . $path_parts['basename'];
-            $path     = rtrim($path_parts['dirname'], ':');
+    /**
+     * Get relative path based on a token.
+     *
+     * Path supports following syntaxes:
+     *
+     * 'self@', 'self@/path'
+     * 'page@:/route', 'page@:/route/filename.ext'
+     * 'theme@:', 'theme@:/path'
+     *
+     * @param string $path
+     * @param FlexObjectInterface|PageInterface|null $object
+     * @return string
+     * @throws RuntimeException
+     */
+    public static function getPathFromToken($path, $object = null)
+    {
+        $matches = static::resolveTokenPath($path);
+        if (null === $matches) {
+            return $path;
         }
 
-        $regex = '/(@self|self@)|((?:@page|page@):(?:.*))|((?:@theme|theme@):(?:.*))/';
-        preg_match($regex, $path, $matches);
+        $grav = Grav::instance();
 
-        if ($matches) {
-            if ($matches[1]) {
-                if (null === $page) {
-                    throw new RuntimeException('Page not available for this self@ reference');
+        switch ($matches[0]) {
+            case 'self':
+                if (!$object instanceof MediaInterface) {
+                    throw new RuntimeException(sprintf('Page not available for self@ reference: %s', $path));
                 }
-            } elseif ($matches[2]) {
-                // page@
-                $parts = explode(':', $path);
-                $route = $parts[1];
-                $page  = $grav['page']->find($route);
-            } elseif ($matches[3]) {
-                // theme@
-                $parts = explode(':', $path);
-                $route = $parts[1];
-                $theme = str_replace(ROOT_DIR, '', $grav['locator']->findResource('theme://'));
 
-                return $theme . $route . $basename;
+                if ($matches[2] === '') {
+                    if ($object->exists()) {
+                        $route = '/' . $matches[1];
+
+                        if ($object instanceof PageInterface) {
+                            return trim($object->relativePagePath() . $route, '/');
+                        }
+
+                        $folder = $object->getMediaFolder();
+                        if ($folder) {
+                            return trim($folder . $route, '/');
+                        }
+                    } else {
+                        return '';
+                    }
+                }
+
+                break;
+            case 'page':
+                if ($matches[1] === '') {
+                    $route = '/' . $matches[2];
+
+                    // Exclude filename from the page lookup.
+                    if (static::pathinfo($route, PATHINFO_EXTENSION)) {
+                        $basename = '/' . static::basename($route);
+                        $route = \dirname($route);
+                    } else {
+                        $basename = '';
+                    }
+
+                    $key = trim($route === '/' ? $grav['config']->get('system.home.alias') : $route, '/');
+                    if ($object instanceof PageObject) {
+                        $object = $object->getFlexDirectory()->getObject($key);
+                    } elseif (static::isAdminPlugin()) {
+                        /** @var Flex|null $flex */
+                        $flex = $grav['flex'] ?? null;
+                        $object = $flex ? $flex->getObject($key, 'pages') : null;
+                    } else {
+                        /** @var Pages $pages */
+                        $pages = $grav['pages'];
+                        $object = $pages->find($route);
+                    }
+
+                    if ($object instanceof PageInterface) {
+                        return trim($object->relativePagePath() . $basename, '/');
+                    }
+                }
+
+                break;
+            case 'theme':
+                if ($matches[1] === '') {
+                    $route = '/' . $matches[2];
+                    $theme = $grav['locator']->findResource('theme://', false);
+                    if (false !== $theme) {
+                        return trim($theme . $route, '/');
+                    }
+                }
+
+                break;
+        }
+
+        throw new RuntimeException(sprintf('Token path not found: %s', $path));
+    }
+
+    /**
+     * Returns [token, route, path] from '@token/route:/path'. Route and path are optional. If pattern does not match, return null.
+     *
+     * @param string $path
+     * @return string[]|null
+     */
+    protected static function resolveTokenPath(string $path): ?array
+    {
+        if (strpos($path, '@') !== false) {
+            $regex = '/^(@\w+|\w+@|@\w+@)([^:]*)(.*)$/u';
+            if (preg_match($regex, $path, $matches)) {
+                return [
+                    trim($matches[1], '@'),
+                    trim($matches[2], '/'),
+                    trim($matches[3], ':/')
+                ];
             }
-        } else {
-            return $path . $basename;
         }
 
-        if (!$page) {
-            throw new RuntimeException('Page route not found: ' . $path);
-        }
-
-        $path = str_replace($matches[0], rtrim($page->relativePagePath(), '/'), $path);
-
-        return $path . $basename;
+        return null;
     }
 
     /**
@@ -1630,7 +1812,7 @@ abstract class Utils
             $size *= 1024 ** stripos('bkmgtpezy', $unit[0]);
         }
 
-        return (int) abs(round($size));
+        return (int)abs(round($size));
     }
 
     /**
@@ -1644,7 +1826,7 @@ abstract class Utils
     {
         $enc_url = preg_replace_callback(
             '%[^:/@?&=#]+%usD',
-            function ($matches) {
+            static function ($matches) {
                 return urlencode($matches[0]);
             },
             $url
@@ -1668,14 +1850,14 @@ abstract class Utils
      *
      * @param string $string
      * @param bool $block Block or Line processing
-     * @param null $page
+     * @param PageInterface|null $page
      * @return string
      * @throws Exception
      */
     public static function processMarkdown($string, $block = true, $page = null)
     {
         $grav = Grav::instance();
-        $page     = $page ?? $grav['page'] ?? null;
+        $page = $page ?? $grav['page'] ?? null;
         $defaults = [
             'markdown' => $grav['config']->get('system.pages.markdown', []),
             'images' => $grav['config']->get('system.images', [])
@@ -1717,12 +1899,12 @@ abstract class Utils
         $ip = (string)inet_pton($ip);
 
         // Maximum netmask length = same as packed address
-        $len = 8*strlen($ip);
+        $len = 8 * strlen($ip);
         if ($prefix > $len) {
             $prefix = $len;
         }
 
-        $mask  = str_repeat('f', $prefix>>2);
+        $mask = str_repeat('f', $prefix >> 2);
 
         switch ($prefix & 3) {
             case 3:
@@ -1735,7 +1917,7 @@ abstract class Utils
                 $mask .= '8';
                 break;
         }
-        $mask = str_pad($mask, $len>>2, '0');
+        $mask = str_pad($mask, $len >> 2, '0');
 
         // Packed representation of netmask
         $mask = pack('H*', $mask);
@@ -1749,11 +1931,14 @@ abstract class Utils
      * Wrapper to ensure html, htm in the front of the supported page types
      *
      * @param array|null $defaults
-     * @return array|mixed
+     * @return array
      */
     public static function getSupportPageTypes(array $defaults = null)
     {
         $types = Grav::instance()['config']->get('system.pages.types', $defaults);
+        if (!is_array($types)) {
+            return [];
+        }
 
         // remove html/htm
         $types = static::arrayRemoveValue($types, ['html', 'htm']);
@@ -1762,5 +1947,245 @@ abstract class Utils
         $types = array_merge(['html', 'htm'], $types);
 
         return $types;
+    }
+
+    /**
+     * @param string $name
+     * @return bool
+     */
+    public static function isDangerousFunction(string $name): bool
+    {
+        static $commandExecutionFunctions = [
+            'exec',
+            'passthru',
+            'system',
+            'shell_exec',
+            'popen',
+            'proc_open',
+            'pcntl_exec',
+        ];
+
+        static $codeExecutionFunctions = [
+            'assert',
+            'preg_replace',
+            'create_function',
+            'include',
+            'include_once',
+            'require',
+            'require_once'
+        ];
+
+        static $callbackFunctions = [
+            'ob_start' => 0,
+            'array_diff_uassoc' => -1,
+            'array_diff_ukey' => -1,
+            'array_filter' => 1,
+            'array_intersect_uassoc' => -1,
+            'array_intersect_ukey' => -1,
+            'array_map' => 0,
+            'array_reduce' => 1,
+            'array_udiff_assoc' => -1,
+            'array_udiff_uassoc' => [-1, -2],
+            'array_udiff' => -1,
+            'array_uintersect_assoc' => -1,
+            'array_uintersect_uassoc' => [-1, -2],
+            'array_uintersect' => -1,
+            'array_walk_recursive' => 1,
+            'array_walk' => 1,
+            'assert_options' => 1,
+            'uasort' => 1,
+            'uksort' => 1,
+            'usort' => 1,
+            'preg_replace_callback' => 1,
+            'spl_autoload_register' => 0,
+            'iterator_apply' => 1,
+            'call_user_func' => 0,
+            'call_user_func_array' => 0,
+            'register_shutdown_function' => 0,
+            'register_tick_function' => 0,
+            'set_error_handler' => 0,
+            'set_exception_handler' => 0,
+            'session_set_save_handler' => [0, 1, 2, 3, 4, 5],
+            'sqlite_create_aggregate' => [2, 3],
+            'sqlite_create_function' => 2,
+        ];
+
+        static $informationDiscosureFunctions = [
+            'phpinfo',
+            'posix_mkfifo',
+            'posix_getlogin',
+            'posix_ttyname',
+            'getenv',
+            'get_current_user',
+            'proc_get_status',
+            'get_cfg_var',
+            'disk_free_space',
+            'disk_total_space',
+            'diskfreespace',
+            'getcwd',
+            'getlastmo',
+            'getmygid',
+            'getmyinode',
+            'getmypid',
+            'getmyuid'
+        ];
+
+        static $otherFunctions = [
+            'extract',
+            'parse_str',
+            'putenv',
+            'ini_set',
+            'mail',
+            'header',
+            'proc_nice',
+            'proc_terminate',
+            'proc_close',
+            'pfsockopen',
+            'fsockopen',
+            'apache_child_terminate',
+            'posix_kill',
+            'posix_mkfifo',
+            'posix_setpgid',
+            'posix_setsid',
+            'posix_setuid',
+        ];
+
+        if (in_array($name, $commandExecutionFunctions)) {
+            return true;
+        }
+
+        if (in_array($name, $codeExecutionFunctions)) {
+            return true;
+        }
+
+        if (isset($callbackFunctions[$name])) {
+            return true;
+        }
+
+        if (in_array($name, $informationDiscosureFunctions)) {
+            return true;
+        }
+
+        if (in_array($name, $otherFunctions)) {
+            return true;
+        }
+
+        return static::isFilesystemFunction($name);
+    }
+
+    /**
+     * @param string $name
+     * @return bool
+     */
+    public static function isFilesystemFunction(string $name): bool
+    {
+        static $fileWriteFunctions = [
+            'fopen',
+            'tmpfile',
+            'bzopen',
+            'gzopen',
+            // write to filesystem (partially in combination with reading)
+            'chgrp',
+            'chmod',
+            'chown',
+            'copy',
+            'file_put_contents',
+            'lchgrp',
+            'lchown',
+            'link',
+            'mkdir',
+            'move_uploaded_file',
+            'rename',
+            'rmdir',
+            'symlink',
+            'tempnam',
+            'touch',
+            'unlink',
+            'imagepng',
+            'imagewbmp',
+            'image2wbmp',
+            'imagejpeg',
+            'imagexbm',
+            'imagegif',
+            'imagegd',
+            'imagegd2',
+            'iptcembed',
+            'ftp_get',
+            'ftp_nb_get',
+        ];
+
+        static $fileContentFunctions = [
+            'file_get_contents',
+            'file',
+            'filegroup',
+            'fileinode',
+            'fileowner',
+            'fileperms',
+            'glob',
+            'is_executable',
+            'is_uploaded_file',
+            'parse_ini_file',
+            'readfile',
+            'readlink',
+            'realpath',
+            'gzfile',
+            'readgzfile',
+            'stat',
+            'imagecreatefromgif',
+            'imagecreatefromjpeg',
+            'imagecreatefrompng',
+            'imagecreatefromwbmp',
+            'imagecreatefromxbm',
+            'imagecreatefromxpm',
+            'ftp_put',
+            'ftp_nb_put',
+            'hash_update_file',
+            'highlight_file',
+            'show_source',
+            'php_strip_whitespace',
+        ];
+
+        static $filesystemFunctions = [
+            // read from filesystem
+            'file_exists',
+            'fileatime',
+            'filectime',
+            'filemtime',
+            'filesize',
+            'filetype',
+            'is_dir',
+            'is_file',
+            'is_link',
+            'is_readable',
+            'is_writable',
+            'is_writeable',
+            'linkinfo',
+            'lstat',
+            //'pathinfo',
+            'getimagesize',
+            'exif_read_data',
+            'read_exif_data',
+            'exif_thumbnail',
+            'exif_imagetype',
+            'hash_file',
+            'hash_hmac_file',
+            'md5_file',
+            'sha1_file',
+            'get_meta_tags',
+        ];
+
+        if (in_array($name, $fileWriteFunctions)) {
+            return true;
+        }
+
+        if (in_array($name, $fileContentFunctions)) {
+            return true;
+        }
+
+        if (in_array($name, $filesystemFunctions)) {
+            return true;
+        }
+
+        return false;
     }
 }

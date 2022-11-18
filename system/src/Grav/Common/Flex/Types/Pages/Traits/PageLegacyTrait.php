@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * @package    Grav\Common\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -103,7 +103,10 @@ trait PageLegacyTrait
         $parent = $this->parent();
         $collection = $parent ? $parent->collection('content', false) : null;
         if (null !== $path && $collection instanceof PageCollectionInterface) {
-            return $collection->adjacentSibling($path, $direction);
+            $child = $collection->adjacentSibling($path, $direction);
+            if ($child instanceof PageInterface) {
+                return $child;
+            }
         }
 
         return false;

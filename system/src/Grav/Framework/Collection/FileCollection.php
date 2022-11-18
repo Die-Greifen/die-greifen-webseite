@@ -3,19 +3,19 @@
 /**
  * @package    Grav\Framework\Collection
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
 namespace Grav\Framework\Collection;
 
+use stdClass;
+
 /**
  * Collection of objects stored into a filesystem.
  *
  * @package Grav\Framework\Collection
- * @template TKey
- * @template T
- * @extends AbstractFileCollection<TKey,T>
+ * @extends AbstractFileCollection<array-key,stdClass>
  */
 class FileCollection extends AbstractFileCollection
 {

@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -38,9 +38,14 @@ interface FlexFormInterface extends Serializable, FormInterface
     /**
      * Get route for deleting files by AJAX.
      *
-     * @param string $field     Field where the file is associated into.
-     * @param string $filename  Filename for the file.
+     * @param string|null $field     Field where the file is associated into.
+     * @param string|null $filename  Filename for the file.
      * @return Route|null       Returns Route object or null if file uploads are not enabled.
      */
     public function getFileDeleteAjaxRoute($field, $filename);
+
+//    /**
+//     * @return FlexObjectInterface
+//     */
+//    public function getObject();
 }

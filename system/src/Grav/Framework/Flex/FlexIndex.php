@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -11,6 +11,7 @@ namespace Grav\Framework\Flex;
 
 use Exception;
 use Grav\Common\Debugger;
+use Grav\Common\File\CompiledJsonFile;
 use Grav\Common\File\CompiledYamlFile;
 use Grav\Common\Grav;
 use Grav\Common\Inflector;
@@ -33,27 +34,27 @@ use function in_array;
 /**
  * Class FlexIndex
  * @package Grav\Framework\Flex
- * @template TKey
  * @template T of FlexObjectInterface
  * @template C of FlexCollectionInterface
- * @extends ObjectIndex<TKey,T>
- * @implements FlexIndexInterface<TKey,T>
+ * @extends ObjectIndex<string,T,C>
+ * @implements FlexIndexInterface<T>
+ * @mixin C
  */
-class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexIndexInterface
+class FlexIndex extends ObjectIndex implements FlexIndexInterface
 {
     const VERSION = 1;
 
     /** @var FlexDirectory|null */
     private $_flexDirectory;
     /** @var string */
-    private $_keyField;
+    private $_keyField = 'storage_key';
     /** @var array */
     private $_indexKeys;
 
     /**
      * @param FlexDirectory $directory
      * @return static
-     * @phpstan-return static<TKey,T,C>
+     * @phpstan-return static<T,C>
      */
     public static function createFromStorage(FlexDirectory $directory)
     {
@@ -118,6 +119,14 @@ class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexInde
     }
 
     /**
+     * @return string
+     */
+    public function getKey()
+    {
+        return $this->_key ?: $this->getFlexType() . '@@' . spl_object_hash($this);
+    }
+
+    /**
      * {@inheritdoc}
      * @see FlexCommonInterface::hasFlexFeature()
      */
@@ -132,6 +141,7 @@ class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexInde
      */
     public function getFlexFeatures(): array
     {
+        /** @var array $implements */
         $implements = class_implements($this->getFlexDirectory()->getCollectionClass());
 
         $list = [];
@@ -152,6 +162,10 @@ class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexInde
      */
     public function search(string $search, $properties = null, array $options = null)
     {
+        $directory = $this->getFlexDirectory();
+        $properties = $directory->getSearchProperties($properties);
+        $options = $directory->getSearchOptions($options);
+
         return $this->__call('search', [$search, $properties, $options]);
     }
 
@@ -163,7 +177,6 @@ class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexInde
     {
         return $this->orderBy($orderings);
     }
-
 
     /**
      * {@inheritdoc}
@@ -342,7 +355,6 @@ class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexInde
     /**
      * @param string $key
      * @return array
-     * @phpstan-param TKey $key
      */
     public function getMetaData($key): array
     {
@@ -354,7 +366,7 @@ class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexInde
      */
     public function getKeyField(): string
     {
-        return $this->_keyField ?? 'storage_key';
+        return $this->_keyField;
     }
 
     /**
@@ -369,7 +381,7 @@ class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexInde
     /**
      * @param array $orderings
      * @return static
-     * @phpstan-return static<TKey,T,C>
+     * @phpstan-return static<T,C>
      */
     public function orderBy(array $orderings)
     {
@@ -379,7 +391,7 @@ class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexInde
 
         // Handle primary key alias.
         $keyField = $this->getFlexDirectory()->getStorage()->getKeyField();
-        if (isset($orderings[$keyField])) {
+        if ($keyField !== 'key' && $keyField !== 'storage_key' && isset($orderings[$keyField])) {
             $orderings['key'] = $orderings[$keyField];
             unset($orderings[$keyField]);
         }
@@ -417,7 +429,7 @@ class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexInde
             $previous = $search;
         }
 
-        return $this->createFrom(array_replace($previous ?? [], $this->getEntries()) ?? []);
+        return $this->createFrom(array_replace($previous ?? [], $this->getEntries()));
     }
 
     /**
@@ -433,12 +445,13 @@ class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexInde
      * @param array $arguments
      * @return mixed
      */
+    #[\ReturnTypeWillChange]
     public function __call($name, $arguments)
     {
         /** @var Debugger $debugger */
         $debugger = Grav::instance()['debugger'];
 
-        /** @var FlexCollection $className */
+        /** @phpstan-var class-string $className */
         $className = $this->getFlexDirectory()->getCollectionClass();
         $cachedMethods = $className::getCachedMethods();
 
@@ -493,9 +506,13 @@ class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexInde
             }
         } else {
             $collection = $this->loadCollection();
-            $result = $collection->{$name}(...$arguments);
-            if (!isset($cachedMethods[$name])) {
-                $debugger->addMessage("Call '{$flexType}:{$name}()' isn't cached", 'debug');
+            if (\is_callable([$collection, $name])) {
+                $result = $collection->{$name}(...$arguments);
+                if (!isset($cachedMethods[$name])) {
+                    $debugger->addMessage("Call '{$flexType}:{$name}()' isn't cached", 'debug');
+                }
+            } else {
+                $result = null;
             }
         }
 
@@ -523,6 +540,7 @@ class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexInde
     /**
      * @return array
      */
+    #[\ReturnTypeWillChange]
     public function __debugInfo()
     {
         return [
@@ -537,10 +555,11 @@ class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexInde
      * @param array $entries
      * @param string|null $keyField
      * @return static
-     * @phpstan-return static<TKey,T,C>
+     * @phpstan-return static<T,C>
      */
     protected function createFrom(array $entries, string $keyField = null)
     {
+        /** @phpstan-var static<T,C> $index */
         $index = new static($entries, $this->getFlexDirectory());
         $index->setKeyField($keyField ?? $this->_keyField);
 
@@ -607,9 +626,11 @@ class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexInde
      * @param string $key
      * @param mixed $value
      * @return ObjectInterface|null
+     * @phpstan-return T|null
      */
     protected function loadElement($key, $value): ?ObjectInterface
     {
+        /** @phpstan-var T[] $objects */
         $objects = $this->getFlexDirectory()->loadObjects([$key => $value]);
 
         return $objects ? reset($objects): null;
@@ -618,10 +639,14 @@ class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexInde
     /**
      * @param array|null $entries
      * @return ObjectInterface[]
+     * @phpstan-return T[]
      */
     protected function loadElements(array $entries = null): array
     {
-        return $this->getFlexDirectory()->loadObjects($entries ?? $this->getEntries());
+        /** @phpstan-var T[] $objects */
+        $objects = $this->getFlexDirectory()->loadObjects($entries ?? $this->getEntries());
+
+        return $objects;
     }
 
     /**
@@ -631,7 +656,10 @@ class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexInde
      */
     protected function loadCollection(array $entries = null): CollectionInterface
     {
-        return $this->getFlexDirectory()->loadCollection($entries ?? $this->getEntries(), $this->_keyField);
+        /** @var C $collection */
+        $collection = $this->getFlexDirectory()->loadCollection($entries ?? $this->getEntries(), $this->_keyField);
+
+        return $collection;
     }
 
     /**
@@ -821,7 +849,7 @@ class FlexIndex extends ObjectIndex implements FlexCollectionInterface, FlexInde
 
     /**
      * @param FlexStorageInterface $storage
-     * @return CompiledYamlFile|null
+     * @return CompiledYamlFile|CompiledJsonFile|null
      */
     protected static function getIndexFile(FlexStorageInterface $storage)
     {

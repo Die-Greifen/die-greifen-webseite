@@ -3,13 +3,12 @@
 /**
  * @package    Grav\Framework\Object
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
 namespace Grav\Framework\Object;
 
-use Doctrine\Common\Collections\Collection;
 use Doctrine\Common\Collections\Criteria;
 use Grav\Framework\Collection\ArrayCollection;
 use Grav\Framework\Object\Access\NestedPropertyCollectionTrait;
@@ -22,13 +21,14 @@ use function array_slice;
 /**
  * Class contains a collection of objects.
  *
- * @template TKey
- * @template T
+ * @template TKey of array-key
+ * @template T of \Grav\Framework\Object\Interfaces\ObjectInterface
  * @extends ArrayCollection<TKey,T>
  * @implements NestedObjectCollectionInterface<TKey,T>
  */
 class ObjectCollection extends ArrayCollection implements NestedObjectCollectionInterface
 {
+    /** @phpstan-use ObjectCollectionTrait<TKey,T> */
     use ObjectCollectionTrait;
     use NestedPropertyCollectionTrait {
         NestedPropertyCollectionTrait::group insteadof ObjectCollectionTrait;
@@ -66,6 +66,7 @@ class ObjectCollection extends ArrayCollection implements NestedObjectCollection
      */
     public function limit($start, $limit = null)
     {
+        /** @phpstan-var static<TKey,T> */
         return $this->createFrom($this->slice($start, $limit));
     }
 
@@ -87,14 +88,11 @@ class ObjectCollection extends ArrayCollection implements NestedObjectCollection
 
         if ($orderings = $criteria->getOrderings()) {
             $next = null;
-            /**
-             * @var string $field
-             * @var string $ordering
-             */
             foreach (array_reverse($orderings) as $field => $ordering) {
                 $next = ObjectExpressionVisitor::sortByField($field, $ordering === Criteria::DESC ? -1 : 1, $next);
             }
 
+            /** @phpstan-ignore-next-line */
             if ($next) {
                 uasort($filtered, $next);
             }
@@ -107,11 +105,13 @@ class ObjectCollection extends ArrayCollection implements NestedObjectCollection
             $filtered = array_slice($filtered, (int)$offset, $length);
         }
 
+        /** @phpstan-var static<TKey,T> */
         return $this->createFrom($filtered);
     }
 
     /**
      * @return array
+     * @phpstan-return array<TKey,T>
      */
     protected function getElements()
     {
@@ -121,9 +121,11 @@ class ObjectCollection extends ArrayCollection implements NestedObjectCollection
     /**
      * @param array $elements
      * @return array
+     * @phpstan-return array<TKey,T>
      */
     protected function setElements(array $elements)
     {
+        /** @phpstan-var array<TKey,T> $elements */
         return $elements;
     }
 }

@@ -1,10 +1,12 @@
 ---
 title: Admin Login
 expires: 0
+access:
+  admin.login: false
 
 forms:
   login:
-    action:
+    type: admin
     method: post
 
     fields:
@@ -22,7 +24,7 @@ forms:
           required: true
 
   login-twofa:
-    action:
+    type: admin
     method: post
 
     fields:
@@ -35,4 +37,9 @@ forms:
         id: twofa-code
         autofocus: true
         placeholder: PLUGIN_ADMIN.2FA_CODE_INPUT
+        description: or
+      yubikey_otp: 
+        type: text
+        id: yubikey-otp
+        placeholder: PLUGIN_ADMIN.YUBIKEY_OTP_INPUT
 ---

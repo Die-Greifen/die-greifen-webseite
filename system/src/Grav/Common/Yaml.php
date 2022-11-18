@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Common
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -17,8 +17,8 @@ use Grav\Framework\File\Formatter\YamlFormatter;
  */
 abstract class Yaml
 {
-    /** @var YamlFormatter */
-    private static $yaml;
+    /** @var YamlFormatter|null */
+    protected static $yaml;
 
     /**
      * @param string $data
@@ -51,7 +51,7 @@ abstract class Yaml
     /**
      * @return void
      */
-    private static function init()
+    protected static function init()
     {
         $config = [
             'inline' => 5,

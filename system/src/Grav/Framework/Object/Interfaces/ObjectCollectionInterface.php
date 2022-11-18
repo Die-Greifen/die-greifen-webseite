@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Object
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -16,7 +16,7 @@ use Serializable;
 /**
  * ObjectCollection Interface
  * @package Grav\Framework\Collection
- * @template TKey
+ * @template TKey of array-key
  * @template T
  * @extends CollectionInterface<TKey,T>
  * @extends Selectable<TKey,T>
@@ -76,6 +76,7 @@ interface ObjectCollectionInterface extends CollectionInterface, Selectable, Ser
      * Create a copy from this collection by cloning all objects in the collection.
      *
      * @return static
+     * @phpstan-return static<TKey,T>
      */
     public function copy();
 

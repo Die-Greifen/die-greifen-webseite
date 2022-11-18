@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Console\Gpm
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -11,10 +11,10 @@ namespace Grav\Console\Gpm;
 
 use Exception;
 use Grav\Common\Filesystem\Folder;
+use Grav\Common\HTTP\Response;
 use Grav\Common\GPM\GPM;
 use Grav\Common\GPM\Installer;
 use Grav\Common\GPM\Licenses;
-use Grav\Common\GPM\Response;
 use Grav\Common\GPM\Remote\Package;
 use Grav\Common\Grav;
 use Grav\Common\Utils;
@@ -485,7 +485,7 @@ class InstallCommand extends GpmCommand
     {
         $io = $this->getIO();
 
-        exec('cd ' . $this->destination);
+        exec('cd ' . escapeshellarg($this->destination));
 
         $to = $this->destination . DS . $package->install_path;
         $from = $this->getSymlinkSource($package);
@@ -579,7 +579,7 @@ class InstallCommand extends GpmCommand
 
         $tmp_dir = Grav::instance()['locator']->findResource('tmp://', true, true);
         $this->tmp = $tmp_dir . '/Grav-' . uniqid();
-        $filename = $package->slug . basename($package->zipball_url);
+        $filename = $package->slug . Utils::basename($package->zipball_url);
         $filename = preg_replace('/[\\\\\/:"*?&<>|]+/m', '-', $filename);
         $query = '';
 
@@ -600,7 +600,13 @@ class InstallCommand extends GpmCommand
         try {
             $output = Response::get($package->zipball_url . $query, [], [$this, 'progress']);
         } catch (Exception $e) {
-            $error = str_replace("\n", "\n  |  '- ", $e->getMessage());
+            if (!empty($package->premium) && $e->getCode() === 401) {
+                $message = '<yellow>Unauthorized Premium License Key</yellow>';
+            } else {
+                $message = $e->getMessage();
+            }
+
+            $error = str_replace("\n", "\n  |  '- ", $message);
             $io->write("\x0D");
             // extra white spaces to clear out the buffer properly
             $io->writeln('  |- Downloading package...    <red>error</red>                             ');

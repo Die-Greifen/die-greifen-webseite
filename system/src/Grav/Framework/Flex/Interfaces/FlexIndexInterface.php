@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * @package    Grav\Framework\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -21,9 +21,8 @@ use Grav\Framework\Flex\FlexDirectory;
  *
  * @used-by \Grav\Framework\Flex\FlexIndex
  * @since 1.6
- * @template TKey
  * @template T
- * @extends FlexCollectionInterface<TKey,T>
+ * @extends FlexCollectionInterface<T>
  */
 interface FlexIndexInterface extends FlexCollectionInterface
 {
@@ -52,6 +51,7 @@ interface FlexIndexInterface extends FlexCollectionInterface
      *
      * @param string|null $keyField Switch key field of the collection.
      * @return static  Returns a new Flex Collection with new key field.
+     * @phpstan-return static<T>
      * @api
      */
     public function withKeyField(string $keyField = null);

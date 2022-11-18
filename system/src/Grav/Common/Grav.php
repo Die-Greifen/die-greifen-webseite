@@ -3,12 +3,13 @@
 /**
  * @package    Grav\Common
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
 namespace Grav\Common;
 
+use Composer\Autoload\ClassLoader;
 use Grav\Common\Config\Config;
 use Grav\Common\Config\Setup;
 use Grav\Common\Helpers\Exif;
@@ -47,8 +48,11 @@ use Grav\Common\Service\TaskServiceProvider;
 use Grav\Common\Twig\Twig;
 use Grav\Framework\DI\Container;
 use Grav\Framework\Psr7\Response;
+use Grav\Framework\RequestHandler\Middlewares\MultipartRequestSupport;
 use Grav\Framework\RequestHandler\RequestHandler;
+use Grav\Framework\Route\Route;
 use Grav\Framework\Session\Messages;
+use InvalidArgumentException;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use RocketTheme\Toolbox\Event\Event;
@@ -59,8 +63,10 @@ use function call_user_func_array;
 use function function_exists;
 use function get_class;
 use function in_array;
+use function is_array;
 use function is_callable;
 use function is_int;
+use function is_string;
 use function strlen;
 
 /**
@@ -112,6 +118,7 @@ class Grav extends Container
      * @var array All middleware processors that are processed in $this->process()
      */
     protected $middleware = [
+        'multipartRequestSupport',
         'initializeProcessor',
         'pluginsProcessor',
         'themesProcessor',
@@ -134,7 +141,7 @@ class Grav extends Container
      *
      * @return void
      */
-    public static function resetInstance()
+    public static function resetInstance(): void
     {
         if (self::$instance) {
             // @phpstan-ignore-next-line
@@ -152,6 +159,13 @@ class Grav extends Container
     {
         if (null === self::$instance) {
             self::$instance = static::load($values);
+
+            /** @var ClassLoader|null $loader */
+            $loader = self::$instance['loader'] ?? null;
+            if ($loader) {
+                // Load fix for Deferred Twig Extension
+                $loader->addPsr4('Phive\\Twig\\Extensions\\Deferred\\', LIB_DIR . 'Phive/Twig/Extensions/Deferred/', true);
+            }
         } elseif ($values) {
             $instance = self::$instance;
             foreach ($values as $key => $value) {
@@ -162,6 +176,19 @@ class Grav extends Container
         return self::$instance;
     }
 
+    /**
+     * Get Grav version.
+     *
+     * @return string
+     */
+    public function getVersion(): string
+    {
+        return GRAV_VERSION;
+    }
+
+    /**
+     * @return bool
+     */
     public function isSetup(): bool
     {
         return isset($this->initialized['setup']);
@@ -221,7 +248,7 @@ class Grav extends Container
      *
      * @return void
      */
-    public function process()
+    public function process(): void
     {
         if (isset($this->initialized['process'])) {
             return;
@@ -234,6 +261,9 @@ class Grav extends Container
 
         $container = new Container(
             [
+                'multipartRequestSupport' => function () {
+                    return new MultipartRequestSupport();
+                },
                 'initializeProcessor' => function () {
                     return new InitializeProcessor($this);
                 },
@@ -317,19 +347,33 @@ class Grav extends Container
     }
 
     /**
-     * Terminates Grav request with a response.
+     * Clean any output buffers. Useful when exiting from the application.
      *
-     * Please use this method instead of calling `die();` or `exit();`. Note that you need to create a response object.
+     * Please use $grav->close() and $grav->redirect() instead of calling this one!
      *
-     * @param ResponseInterface $response
      * @return void
      */
-    public function close(ResponseInterface $response): void
+    public function cleanOutputBuffers(): void
     {
         // Make sure nothing extra gets written to the response.
         while (ob_get_level()) {
             ob_end_clean();
         }
+        // Work around PHP bug #8218 (8.0.17 & 8.1.4).
+        header_remove('Content-Encoding');
+    }
+
+    /**
+     * Terminates Grav request with a response.
+     *
+     * Please use this method instead of calling `die();` or `exit();`. Note that you need to create a response object.
+     *
+     * @param ResponseInterface $response
+     * @return never-return
+     */
+    public function close(ResponseInterface $response): void
+    {
+        $this->cleanOutputBuffers();
 
         // Close the session.
         if (isset($this['session'])) {
@@ -374,8 +418,8 @@ class Grav extends Container
 
     /**
      * @param ResponseInterface $response
-     * @return void
-     * @deprecated 1.7 Do not use
+     * @return never-return
+     * @deprecated 1.7 Use $grav->close() instead.
      */
     public function exit(ResponseInterface $response): void
     {
@@ -387,9 +431,9 @@ class Grav extends Container
      *
      * Please use this method instead of calling `header("Location: {$url}", true, 302); exit();`.
      *
-     * @param string $route Internal route.
+     * @param Route|string $route Internal route.
      * @param int|null $code  Redirection code (30x)
-     * @return void
+     * @return never-return
      */
     public function redirect($route, $code = null): void
     {
@@ -401,7 +445,7 @@ class Grav extends Container
     /**
      * Returns redirect response object from Grav.
      *
-     * @param string $route Internal route.
+     * @param Route|string $route Internal route.
      * @param int|null $code  Redirection code (30x)
      * @return ResponseInterface
      */
@@ -410,31 +454,47 @@ class Grav extends Container
         /** @var Uri $uri */
         $uri = $this['uri'];
 
-        // Clean route for redirect
-        $route = preg_replace("#^\/[\\\/]+\/#", '/', $route);
+        if (is_string($route)) {
+            // Clean route for redirect
+            $route = preg_replace("#^\/[\\\/]+\/#", '/', $route);
 
-         // Check for code in route
-        $regex = '/.*(\[(30[1-7])\])$/';
-        preg_match($regex, $route, $matches);
-        if ($matches) {
-            $route = str_replace($matches[1], '', $matches[0]);
-            $code = $matches[2];
+            if (null === $code) {
+                // Check for redirect code in the route: e.g. /new/[301], /new[301]/route or /new[301].html
+                $regex = '/.*(\[(30[1-7])\])(.\w+|\/.*?)?$/';
+                preg_match($regex, $route, $matches);
+                if ($matches) {
+                    $route = str_replace($matches[1], '', $matches[0]);
+                    $code = $matches[2];
+                }
+            }
+
+            if ($uri::isExternal($route)) {
+                $url = $route;
+            } else {
+                $url = rtrim($uri->rootUrl(), '/') . '/';
+
+                if ($this['config']->get('system.pages.redirect_trailing_slash', true)) {
+                    $url .= trim($route, '/'); // Remove trailing slash
+                } else {
+                    $url .= ltrim($route, '/'); // Support trailing slash default routes
+                }
+            }
+        } elseif ($route instanceof Route) {
+            $url = $route->toString(true);
+        } else {
+            throw new InvalidArgumentException('Bad $route');
+        }
+
+        if ($code < 300 || $code > 399) {
+            $code = null;
         }
 
         if ($code === null) {
             $code = $this['config']->get('system.pages.redirect_default_code', 302);
         }
 
-        if ($uri::isExternal($route)) {
-            $url = $route;
-        } else {
-            $url = rtrim($uri->rootUrl(), '/') . '/';
-
-            if ($this['config']->get('system.pages.redirect_trailing_slash', true)) {
-                $url .= trim($route, '/'); // Remove trailing slash
-            } else {
-                $url .= ltrim($route, '/'); // Support trailing slash default routes
-            }
+        if ($uri->extension() === 'json') {
+            return new Response(200, ['Content-Type' => 'application/json'], json_encode(['code' => $code, 'redirect' => $url], JSON_THROW_ON_ERROR));
         }
 
         return new Response($code, ['Location' => $url]);
@@ -447,7 +507,7 @@ class Grav extends Container
      * @param int    $code  Redirection code (30x)
      * @return void
      */
-    public function redirectLangSafe($route, $code = null)
+    public function redirectLangSafe($route, $code = null): void
     {
         if (!$this['uri']->isExternal($route)) {
             $this->redirect($this['pages']->route($route), $code);
@@ -462,7 +522,7 @@ class Grav extends Container
      * @param ResponseInterface|null $response
      * @return void
      */
-    public function header(ResponseInterface $response = null)
+    public function header(ResponseInterface $response = null): void
     {
         if (null === $response) {
             /** @var PageInterface $page */
@@ -487,7 +547,7 @@ class Grav extends Container
      *
      * @return void
      */
-    public function setLocale()
+    public function setLocale(): void
     {
         // Initialize Locale if set and configured.
         if ($this['language']->enabled() && $this['config']->get('system.languages.override_locale')) {
@@ -548,7 +608,7 @@ class Grav extends Container
      *
      * @return void
      */
-    public function shutdown()
+    public function shutdown(): void
     {
         // Prevent user abort allowing onShutdown event to run without interruptions.
         if (function_exists('ignore_user_abort')) {
@@ -612,6 +672,7 @@ class Grav extends Container
      * @param array $args
      * @return mixed|null
      */
+    #[\ReturnTypeWillChange]
     public function __call($method, $args)
     {
         $closure = $this->{$method} ?? null;
@@ -667,7 +728,7 @@ class Grav extends Container
      *
      * @return void
      */
-    protected function registerServices()
+    protected function registerServices(): void
     {
         foreach (self::$diMap as $serviceKey => $serviceClass) {
             if (is_int($serviceKey)) {
@@ -688,7 +749,10 @@ class Grav extends Container
      */
     public function fallbackUrl($path)
     {
-        $this->fireEvent('onPageFallBackUrl');
+        $path_parts = Utils::pathinfo($path);
+        if (!is_array($path_parts)) {
+            return false;
+        }
 
         /** @var Uri $uri */
         $uri = $this['uri'];
@@ -696,9 +760,27 @@ class Grav extends Container
         /** @var Config $config */
         $config = $this['config'];
 
-        $uri_extension = strtolower($uri->extension());
-        $fallback_types = $config->get('system.media.allowed_fallback_types', null);
+        /** @var Pages $pages */
+        $pages = $this['pages'];
+        $page = $pages->find($path_parts['dirname'], true);
+
+        $uri_extension = strtolower($uri->extension() ?? '');
+        $fallback_types = $config->get('system.media.allowed_fallback_types');
         $supported_types = $config->get('media.types');
+
+        $parsed_url = parse_url(rawurldecode($uri->basename()));
+        $media_file = $parsed_url['path'];
+
+        $event = new Event([
+            'uri' => $uri,
+            'page' => &$page,
+            'filename' => &$media_file,
+            'extension' => $uri_extension,
+            'allowed_fallback_types' => &$fallback_types,
+            'media_types' => &$supported_types
+        ]);
+
+        $this->fireEvent('onPageFallBackUrl', $event);
 
         // Check whitelist first, then ensure extension is a valid media type
         if (!empty($fallback_types) && !in_array($uri_extension, $fallback_types, true)) {
@@ -708,16 +790,8 @@ class Grav extends Container
             return false;
         }
 
-        $path_parts = pathinfo($path);
-
-        /** @var Pages $pages */
-        $pages = $this['pages'];
-        $page = $pages->find($path_parts['dirname'], true);
-
         if ($page) {
             $media = $page->media()->all();
-            $parsed_url = parse_url(rawurldecode($uri->basename()));
-            $media_file = $parsed_url['path'];
 
             // if this is a media object, try actions first
             if (isset($media[$media_file])) {
@@ -734,12 +808,10 @@ class Grav extends Container
             // unsupported media type, try to download it...
             if ($uri_extension) {
                 $extension = $uri_extension;
+            } elseif (isset($path_parts['extension'])) {
+                $extension = $path_parts['extension'];
             } else {
-                if (isset($path_parts['extension'])) {
-                    $extension = $path_parts['extension'];
-                } else {
-                    $extension = null;
-                }
+                $extension = null;
             }
 
             if ($extension) {
@@ -749,11 +821,9 @@ class Grav extends Container
                 }
                 Utils::download($page->path() . DIRECTORY_SEPARATOR . $uri->basename(), $download);
             }
-
-            // Nothing found
-            return false;
         }
 
-        return $page;
+        // Nothing found
+        return false;
     }
 }

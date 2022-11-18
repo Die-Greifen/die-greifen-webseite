@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -12,6 +12,7 @@ namespace Grav\Framework\Flex;
 use ArrayAccess;
 use Exception;
 use Grav\Common\Data\Blueprint;
+use Grav\Common\Data\Data;
 use Grav\Common\Debugger;
 use Grav\Common\Grav;
 use Grav\Common\Inflector;
@@ -44,6 +45,7 @@ use function is_array;
 use function is_object;
 use function is_scalar;
 use function is_string;
+use function json_encode;
 
 /**
  * Class FlexObject
@@ -67,13 +69,13 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
     private $_forms = [];
     /** @var Blueprint[] */
     private $_blueprint = [];
-    /** @var array */
+    /** @var array|null */
     private $_meta;
-    /** @var array */
-    protected $_changes;
-    /** @var string */
+    /** @var array|null */
+    protected $_original;
+    /** @var string|null */
     protected $storage_key;
-    /** @var int */
+    /** @var int|null */
     protected $storage_timestamp;
 
     /**
@@ -161,6 +163,7 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
      */
     public function getFlexFeatures(): array
     {
+        /** @var array $implements */
         $implements = class_implements($this);
 
         $list = [];
@@ -196,9 +199,10 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
     /**
      * Refresh object from the storage.
      *
+     * @param bool $keepMissing
      * @return bool True if the object was refreshed
      */
-    public function refresh(): bool
+    public function refresh(bool $keepMissing = false): bool
     {
         $key = $this->getStorageKey();
         if ('' === $key) {
@@ -216,20 +220,36 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
             return false;
         }
 
+        // Get current elements (if requested).
+        $current = $keepMissing ? $this->getElements() : [];
+        // Get elements from the filesystem.
         $elements = $storage->readRows([$key => null])[$key] ?? null;
-        if (null !== $elements || isset($elements['__ERROR'])) {
-            $meta = $elements['_META'] ?? $meta;
+        if (null !== $elements) {
+            $meta = $elements['__META'] ?? $meta;
+            unset($elements['__META']);
             $this->filterElements($elements);
             $newKey = $meta['key'] ?? $this->getKey();
             if ($meta) {
                 $this->setMetaData($meta);
             }
             $this->objectConstruct($elements, $newKey);
-        }
 
-        /** @var Debugger $debugger */
-        $debugger = Grav::instance()['debugger'];
-        $debugger->addMessage("Refreshed {$this->getFlexType()} object {$this->getKey()}", 'debug');
+            if ($current) {
+                // Inject back elements which are missing in the filesystem.
+                $data = $this->getBlueprint()->flattenData($current);
+                foreach ($data as $property => $value) {
+                    if (strpos($property, '.') === false) {
+                        $this->defProperty($property, $value);
+                    } else {
+                        $this->defNestedProperty($property, $value);
+                    }
+                }
+            }
+
+            /** @var Debugger $debugger */
+            $debugger = Grav::instance()['debugger'];
+            $debugger->addMessage("Refreshed {$this->getFlexType()} object {$this->getKey()}", 'debug');
+        }
 
         return true;
     }
@@ -267,21 +287,17 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
      */
     public function search(string $search, $properties = null, array $options = null): float
     {
-        $properties = (array)($properties ?? $this->getFlexDirectory()->getConfig('data.search.fields'));
-        if (!$properties) {
-            $fields = $this->getFlexDirectory()->getConfig('admin.views.list.fields') ?? $this->getFlexDirectory()->getConfig('admin.list.fields', []);
-            foreach ($fields as $property => $value) {
-                if (!empty($value['link'])) {
-                    $properties[] = $property;
-                }
-            }
-        }
-
-        $options = $options ?? (array)$this->getFlexDirectory()->getConfig('data.search.options');
+        $directory = $this->getFlexDirectory();
+        $properties = $directory->getSearchProperties($properties);
+        $options = $directory->getSearchOptions($options);
 
         $weight = 0;
         foreach ($properties as $property) {
-            $weight += $this->searchNestedProperty($property, $search, $options);
+            if (strpos($property, '.')) {
+                $weight += $this->searchNestedProperty($property, $search, $options);
+            } else {
+                $weight += $this->searchProperty($property, $search, $options);
+            }
         }
 
         return $weight > 0 ? min($weight, 1) : 0;
@@ -348,7 +364,7 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
      */
     public function searchProperty(string $property, string $search, array $options = null): float
     {
-        $options = $options ?? $this->getFlexDirectory()->getConfig('data.search.options', []);
+        $options = $options ?? (array)$this->getFlexDirectory()->getConfig('data.search.options');
         $value = $this->getProperty($property);
 
         return $this->searchValue($property, $value, $search, $options);
@@ -362,7 +378,7 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
      */
     public function searchNestedProperty(string $property, string $search, array $options = null): float
     {
-        $options = $options ?? $this->getFlexDirectory()->getConfig('data.search.options', []);
+        $options = $options ?? (array)$this->getFlexDirectory()->getConfig('data.search.options');
         if ($property === 'key') {
             $value = $this->getKey();
         } else {
@@ -420,13 +436,60 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
     }
 
     /**
-     * Get any changes based on data sent to update
+     * Get original data before update
+     *
+     * @return array
+     */
+    public function getOriginalData(): array
+    {
+        return $this->_original ?? [];
+    }
+
+    /**
+     * Get diff array from the object.
+     *
+     * @return array
+     */
+    public function getDiff(): array
+    {
+        $blueprint = $this->getBlueprint();
+
+        $flattenOriginal = $blueprint->flattenData($this->getOriginalData());
+        $flattenElements = $blueprint->flattenData($this->getElements());
+        $removedElements = array_diff_key($flattenOriginal, $flattenElements);
+        $diff = [];
+
+        // Include all added or changed keys.
+        foreach ($flattenElements as $key => $value) {
+            $orig = $flattenOriginal[$key] ?? null;
+            if ($orig !== $value) {
+                $diff[$key] = ['old' => $orig, 'new' => $value];
+            }
+        }
+
+        // Include all removed keys.
+        foreach ($removedElements as $key => $value) {
+            $diff[$key] = ['old' => $value, 'new' => null];
+        }
+
+        return $diff;
+    }
+
+    /**
+     * Get any changes from the object.
      *
      * @return array
      */
     public function getChanges(): array
     {
-        return $this->_changes ?? [];
+        $diff = $this->getDiff();
+
+        $data = new Data();
+        foreach ($diff as $key => $change) {
+            $data->set($key, $change['new']);
+        }
+
+        return $data->toArray();
     }
 
     /**
@@ -586,6 +649,7 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
     /**
      * @return array
      */
+    #[\ReturnTypeWillChange]
     public function jsonSerialize()
     {
         return $this->getElements();
@@ -607,13 +671,18 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
     public function update(array $data, array $files = [])
     {
         if ($data) {
+            // Get currently stored data.
+            $elements = $this->getElements();
+
+            // Store original version of the object.
+            if ($this->_original === null) {
+                $this->_original = $elements;
+            }
+
             $blueprint = $this->getBlueprint();
 
             // Process updated data through the object filters.
             $this->filterElements($data);
-
-            // Get currently stored data.
-            $elements = $this->getElements();
 
             // Merge existing object to the test data to be validated.
             $test = $blueprint->mergeData($elements, $data);
@@ -623,16 +692,14 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
             $data = $blueprint->filter($data, true, true);
 
             // Finally update the object.
-            foreach ($blueprint->flattenData($data) as $key => $value) {
+            $flattenData = $blueprint->flattenData($data);
+            foreach ($flattenData as $key => $value) {
                 if ($value === null) {
                     $this->unsetNestedProperty($key);
                 } else {
                     $this->setNestedProperty($key, $value);
                 }
             }
-
-            // Store the changes
-            $this->_changes = Utils::arrayDiffMultidimensional($this->getElements(), $elements);
         }
 
         if ($files && method_exists($this, 'setUpdatedMedia')) {
@@ -671,6 +738,17 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
     }
 
     /**
+     * @param UserInterface|null $user
+     */
+    public function check(UserInterface $user = null): void
+    {
+        // If user has been provided, check if the user has permissions to save this object.
+        if ($user && !$this->isAuthorized('save', null, $user)) {
+            throw new \RuntimeException('Forbidden', 403);
+        }
+    }
+
+    /**
      * {@inheritdoc}
      * @see FlexObjectInterface::save()
      */
@@ -691,7 +769,7 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
         $value = reset($result);
         $meta = $value['__META'] ?? null;
         if ($meta) {
-            /** @var FlexIndex $indexClass */
+            /** @phpstan-var class-string $indexClass */
             $indexClass = $this->getFlexDirectory()->getIndexClass();
             $indexClass::updateObjectMeta($meta, $value, $storage);
             $this->_meta = $meta;
@@ -788,11 +866,12 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
      */
     public function getForm(string $name = '', array $options = null)
     {
-        if (!isset($this->_forms[$name])) {
-            $this->_forms[$name] = $this->createFormObject($name, $options);
+        $hash = $name . '-' . md5(json_encode($options, JSON_THROW_ON_ERROR));
+        if (!isset($this->_forms[$hash])) {
+            $this->_forms[$hash] = $this->createFormObject($name, $options);
         }
 
-        return $this->_forms[$name];
+        return $this->_forms[$hash];
     }
 
     /**
@@ -802,8 +881,8 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
     public function getDefaultValue(string $name, string $separator = null)
     {
         $separator = $separator ?: '.';
-        $path = explode($separator, $name) ?: [];
-        $offset = array_shift($path) ?? '';
+        $path = explode($separator, $name);
+        $offset = array_shift($path);
 
         $current = $this->getDefaultValues();
 
@@ -865,6 +944,7 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
      *
      * @return string
      */
+    #[\ReturnTypeWillChange]
     public function __toString()
     {
         return $this->getFlexKey();
@@ -873,6 +953,7 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
     /**
      * @return array
      */
+    #[\ReturnTypeWillChange]
     public function __debugInfo()
     {
         return [
@@ -883,6 +964,15 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
             'elements:private' => $this->getElements(),
             'storage:private' => $this->getMetaData()
         ];
+    }
+
+    /**
+     * Clone object.
+     */
+    #[\ReturnTypeWillChange]
+    public function __clone()
+    {
+        // Allows future compatibility as parent::__clone() works.
     }
 
     protected function markAsCopy(): void
@@ -1032,6 +1122,17 @@ class FlexObject implements FlexObjectInterface, FlexAuthorizeInterface
         }
 
         return $action;
+    }
+
+    /**
+     * Method to reset blueprints if the type changes.
+     *
+     * @return void
+     * @since 1.7.18
+     */
+    protected function resetBlueprints(): void
+    {
+        $this->_blueprint = [];
     }
 
     // DEPRECATED METHODS

@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Plugin\Login
  *
- * @copyright  Copyright (C) 2014 - 2017 RocketTheme, LLC. All rights reserved.
+ * @copyright  Copyright (C) 2014 - 2021 RocketTheme, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -15,14 +15,18 @@ use Grav\Common\Data\Data;
 use Grav\Common\Debugger;
 use Grav\Common\Grav;
 use Grav\Common\Language\Language;
+use Grav\Common\Language\LanguageCodes;
 use Grav\Common\Page\Interfaces\PageInterface;
+use Grav\Common\Page\Page;
+use Grav\Common\Page\Pages;
 use Grav\Common\Session;
 use Grav\Common\User\Interfaces\UserCollectionInterface;
 use Grav\Common\User\Interfaces\UserInterface;
 use Grav\Common\Uri;
 use Grav\Common\Utils;
-use Grav\Plugin\Email\Utils as EmailUtils;
+use Grav\Plugin\Login\Events\PageAuthorizeEvent;
 use Grav\Plugin\Login\Events\UserLoginEvent;
+use Grav\Plugin\Login\Invitations\Invitation;
 use Grav\Plugin\Login\RememberMe\RememberMe;
 use Grav\Plugin\Login\RememberMe\TokenStorage;
 use Grav\Plugin\Login\TwoFactorAuth\TwoFactorAuth;
@@ -78,9 +82,9 @@ class Login
 
     /**
      * @param string $message
-     * @param array $data
+     * @param object|array $data
      */
-    public static function addDebugMessage(string $message, $data = [])
+    public static function addDebugMessage(string $message, $data = []): void
     {
         /** @var Debugger $debugger */
         $debugger = Grav::instance()['debugger'];
@@ -168,6 +172,8 @@ class Login
         $grav = Grav::instance();
 
         if ($extra instanceof UserInterface) {
+            user_error(__METHOD__ . '($options, $user) is deprecated since Login Plugin 3.5.0, use logout($options, [\'user\' => $user]) instead', E_USER_DEPRECATED);
+
             $extra = ['user' => $extra];
         } elseif (isset($extra['user'])) {
             $extra['user'] = $grav['user'];
@@ -239,10 +245,15 @@ class Login
      */
     public function register(array $data, array $files = [])
     {
+        // Add defaults and mandatory fields.
+        $data += [
+            'username' => null,
+            'email' => null
+        ];
+
         if (!isset($data['groups'])) {
             //Add new user ACL settings
             $groups = (array) $this->config->get('plugins.login.user_registration.groups', []);
-
             if (\count($groups) > 0) {
                 $data['groups'] = $groups;
             }
@@ -250,23 +261,39 @@ class Login
 
         if (!isset($data['access'])) {
             $access = (array) $this->config->get('plugins.login.user_registration.access.site', []);
-
             if (\count($access) > 0) {
                 $data['access']['site'] = $access;
             }
         }
 
-        $username = $this->validateField('username', $data['username']);
+        // Validate fields from the form.
+        $password = $this->validateField('password1', $data['password'] ?? $data['password1'] ?? null);
+        foreach ($data as $key => &$value) {
+            $value = $this->validateField($key, $value, $key === 'password2' ? $password : '');
+        }
+        unset($value);
 
-        /** @var UserCollectionInterface $users */
-        $users = $this->grav['accounts'];
+        /** @var UserCollectionInterface $accounts */
+        $accounts = $this->grav['accounts'];
 
-        // Create user object and save it
-        $user = $users->load($username);
-        if ($user->exists()) {
-            throw new \RuntimeException('User ' . $username . ' cannot be registered: user already exists!');
+        // Check whether username already exists.
+        $username = $data['username'];
+        if (!$username || $accounts->find($username, ['username'])->exists()) {
+            /** @var Language $language */
+            $language = $this->grav['language'];
+
+            throw new \RuntimeException($language->translate(['PLUGIN_LOGIN.USERNAME_NOT_AVAILABLE', $username]));
+        }
+        // Check whether email already exists.
+        $email = $data['email'];
+        if (!$email || $accounts->find($email, ['email'])->exists()) {
+            /** @var Language $language */
+            $language = $this->grav['language'];
+
+            throw new \RuntimeException($language->translate(['PLUGIN_LOGIN.EMAIL_NOT_AVAILABLE', $email]));
         }
 
+        $user = $accounts->load($username);
         $user->update($data, $files);
         if (isset($data['groups'])) {
             $user->groups = $data['groups'];
@@ -342,47 +369,45 @@ class Login
                 $config = Grav::instance()['config'];
                 $username_regex = '/' . $config->get('system.username_regex') . '/';
 
-                if (!\is_string($value) || !preg_match($username_regex, $value)) {
+                $value = \is_string($value) ? trim($value) : '';
+                if ($value === '' || !preg_match($username_regex, $value)) {
                     throw new \RuntimeException('Username does not pass the minimum requirements');
                 }
 
                 break;
 
+            case 'password':
             case 'password1':
                 /** @var Config $config */
                 $config = Grav::instance()['config'];
                 $pwd_regex = '/' . $config->get('system.pwd_regex') . '/';
 
-                if (!\is_string($value) || !preg_match($pwd_regex, $value)) {
+                $value = \is_string($value) ? $value : '';
+                if ($value === '' || !preg_match($pwd_regex, $value)) {
                     throw new \RuntimeException('Password does not pass the minimum requirements');
                 }
 
                 break;
 
             case 'password2':
-                if (!\is_string($value) || strcmp($value, $extra)) {
+                $value = \is_string($value) ? $value : '';
+                if ($value === '' || $value !== $extra) {
                     throw new \RuntimeException('Passwords did not match.');
                 }
 
                 break;
 
             case 'email':
-                if (!\is_string($value) || !filter_var($value, FILTER_VALIDATE_EMAIL)) {
+                $value = \is_string($value) ? trim($value) : '';
+                if ($value === '' || !filter_var($value, FILTER_VALIDATE_EMAIL)) {
                     throw new \RuntimeException('Not a valid email address');
                 }
 
                 break;
 
             case 'permissions':
-                if (!\is_string($value) || !\in_array($value, ['a', 's', 'b'], true)) {
+                if (!\in_array($value, ['a', 's', 'b'], true)) {
                     throw new \RuntimeException('Permissions ' . $value . ' are invalid.');
-                }
-
-                break;
-
-            case 'fullname':
-                if (!\is_string($value) || trim($value) === '') {
-                    throw new \RuntimeException('Fullname cannot be empty');
                 }
 
                 break;
@@ -394,6 +419,13 @@ class Login
 
                 break;
 
+            case 'language':
+                $languages = new LanguageCodes();
+                if ($value !== null && !array_key_exists($value, $languages->getList())) {
+                    throw new \RuntimeException('Language code is not valid');
+                }
+
+                break;
         }
 
         return $value;
@@ -413,25 +445,9 @@ class Login
             throw new \RuntimeException($this->language->translate('PLUGIN_LOGIN.USER_NEEDS_EMAIL_FIELD'));
         }
 
-        $site_name = $this->config->get('site.title', 'Website');
-
-        $subject = $this->language->translate(['PLUGIN_LOGIN.NOTIFICATION_EMAIL_SUBJECT', $site_name]);
-        $content = $this->language->translate([
-            'PLUGIN_LOGIN.NOTIFICATION_EMAIL_BODY',
-            $site_name,
-            $user->username,
-            $user->email,
-            $this->grav['base_url_absolute'],
-        ]);
-        $to = $this->config->get('plugins.email.to');
-
-        if (empty($to)) {
-            throw new \RuntimeException($this->language->translate('PLUGIN_LOGIN.EMAIL_NOT_CONFIGURED'));
-        }
-
-        $sent = EmailUtils::sendEmail($subject, $content, $to);
-
-        if ($sent < 1) {
+        try {
+            Email::sendNotificationEmail($user);
+        } catch (\Exception $e) {
             throw new \RuntimeException($this->language->translate('PLUGIN_LOGIN.EMAIL_SENDING_FAILURE'));
         }
 
@@ -452,22 +468,9 @@ class Login
             throw new \RuntimeException($this->language->translate('PLUGIN_LOGIN.USER_NEEDS_EMAIL_FIELD'));
         }
 
-        $site_name = $this->config->get('site.title', 'Website');
-        $author = $this->grav['config']->get('site.author.name', '');
-        $fullname = $user->fullname ?: $user->username;
-
-        $subject = $this->language->translate(['PLUGIN_LOGIN.WELCOME_EMAIL_SUBJECT', $site_name]);
-        $content = $this->language->translate(['PLUGIN_LOGIN.WELCOME_EMAIL_BODY',
-            $fullname,
-            $this->grav['base_url_absolute'],
-            $site_name,
-            $author
-        ]);
-        $to = $user->email;
-
-        $sent = EmailUtils::sendEmail($subject, $content, $to);
-
-        if ($sent < 1) {
+        try {
+            Email::sendWelcomeEmail($user);
+        } catch (\Exception $e) {
             throw new \RuntimeException($this->language->translate('PLUGIN_LOGIN.EMAIL_SENDING_FAILURE'));
         }
 
@@ -493,24 +496,29 @@ class Login
         $user->activation_token = $token . '::' . $expire;
         $user->save();
 
-        $param_sep = $this->config->get('system.param_sep', ':');
-        $activation_link = $this->grav['base_url_absolute'] . $this->config->get('plugins.login.route_activate') . '/token' . $param_sep . $token . '/username' . $param_sep . $user->username;
+        try {
+            Email::sendActivationEmail($user);
+        } catch (\Exception $e) {
+            throw new \RuntimeException($this->language->translate('PLUGIN_LOGIN.EMAIL_SENDING_FAILURE'));
+        }
 
-        $site_name = $this->config->get('site.title', 'Website');
-        $author = $this->grav['config']->get('site.author.name', '');
-        $fullname = $user->fullname ?: $user->username;
+        return true;
+    }
 
-        $subject = $this->language->translate(['PLUGIN_LOGIN.ACTIVATION_EMAIL_SUBJECT', $site_name]);
-        $content = $this->language->translate(['PLUGIN_LOGIN.ACTIVATION_EMAIL_BODY',
-            $fullname,
-            $activation_link,
-            $site_name,
-            $author
-        ]);
-        $to = $user->email;
-        $sent = EmailUtils::sendEmail($subject, $content, $to);
-
-        if ($sent < 1) {
+    /**
+     * Handle the email to invite user.
+     *
+     * @param Invitation $invitation
+     * @param string|null $message
+     * @param UserInterface|null $user
+     * @return bool True if the action was performed.
+     * @throws \RuntimeException
+     */
+    public function sendInviteEmail(Invitation $invitation, string $message = null, UserInterface $user = null)
+    {
+        try {
+            Email::sendInvitationEmail($invitation, $message, $user);
+        } catch (\Exception $e) {
             throw new \RuntimeException($this->language->translate('PLUGIN_LOGIN.EMAIL_SENDING_FAILURE'));
         }
 
@@ -604,32 +612,129 @@ class Login
     }
 
     /**
+     * @param string $type
+     * @param string|null $route
+     * @param PageInterface|null $page
+     * @return PageInterface|null
+     */
+    public function getPage(string $type, string $route = null, PageInterface $page = null): ?PageInterface
+    {
+        $route = $route ?? $this->getRoute($type, true);
+        if (null === $route) {
+            return null;
+        }
+
+        if ($page) {
+            $page->route($route);
+            $page->slug(basename($route));
+        } else {
+            /** @var Pages $pages */
+            $pages = $this->grav['pages'];
+            $page = $pages->find($route);
+        }
+        if (!$page instanceof PageInterface) {
+            // Only add login page if it hasn't already been defined.
+            $page = new Page();
+            $page->init(new \SplFileInfo('plugin://login/pages/' . $type . '.md'));
+            $page->route($route);
+            $page->slug(basename($route));
+        }
+
+        // Login page may not have the correct Cache-Control header set, force no-store for the proxies.
+        $cacheControl = $page->cacheControl();
+        if (!$cacheControl) {
+            $page->cacheControl('private, no-cache, must-revalidate');
+        }
+
+        return $page;
+    }
+
+    /**
+     * Add Login page.
+     *
+     * @param string $type
+     * @param string|null $route Optional route if we want to force-add the page.
+     * @param PageInterface|null $page
+     * @return PageInterface|null
+     */
+    public function addPage(string $type, string $route = null, PageInterface $page = null): ?PageInterface
+    {
+        $page = $this->getPage($type, $route, $page);
+        if (null === $page) {
+            return null;
+        }
+
+        /** @var Pages $pages */
+        $pages = $this->grav['pages'];
+        $pages->addPage($page, $route);
+
+        return $page;
+    }
+
+    /**
+     * Get route to a given login page.
+     *
+     * @param string $type Use one of: login, activate, forgot, reset, profile, unauthorized, after_login, after_logout,
+     *                     register, after_registration, after_activation
+     * @param bool|null $enabled
+     * @return string|null Returns route or null if the route has been disabled.
+     */
+    public function getRoute(string $type, bool $enabled = null): ?string
+    {
+        switch ($type) {
+            case 'login':
+                $route = $this->config->get('plugins.login.route');
+                break;
+            case 'activate':
+            case 'forgot':
+            case 'reset':
+            case 'profile':
+                $route = $this->config->get('plugins.login.route_' . $type);
+                break;
+            case 'unauthorized':
+                $route = $this->config->get('plugins.login.route_' . $type, '/');
+                break;
+            case 'after_login':
+            case 'after_logout':
+                $route = $this->config->get('plugins.login.redirect_' . $type);
+                if ($route === true) {
+                    $route = $this->config->get('plugins.login.route_' . $type);
+                }
+                break;
+            case 'register':
+                $enabled = $enabled ?? $this->config->get('plugins.login.user_registration.enabled', false);
+                $route = $enabled === true ? $this->config->get('plugins.login.route_' . $type) : null;
+                break;
+            case 'after_registration':
+            case 'after_activation':
+                $route = $this->config->get('plugins.login.redirect_' . $type);
+                break;
+            default:
+                $route = null;
+        }
+
+        if (!is_string($route) || $route === '') {
+            return null;
+        }
+
+        return $route;
+    }
+
+    /**
      * @param UserInterface $user
      * @param PageInterface $page
      * @param Data|null $config
      * @return bool
      */
-    public function isUserAuthorizedForPage(UserInterface $user, PageInterface $page, $config = null)
+    public function isUserAuthorizedForPage(UserInterface $user, PageInterface $page, Data $config = null): bool
     {
-        $header = $page->header();
-        $rules = (array)($header->access ?? []);
-
-        if (!$rules && $config !== null && $config->get('parent_acl')) {
-            // If page has no ACL rules, use its parent's rules
-            $parent = $page->parent();
-            while (!$rules and $parent) {
-                $header = $parent->header();
-                $rules = (array)($header->access ?? []);
-                $parent = $parent->parent();
-            }
-        }
-
-        // Continue to the page if it has no ACL rules.
-        if (!$rules) {
+        /** @var PageAuthorizeEvent $event */
+        $event = $this->grav->dispatchEvent(new PageAuthorizeEvent($page, $user, $config));
+        if (!$event->hasProtectedAccess()) {
             return true;
         }
 
-        // All protected pages have a private cache-control. This includes pages which are for guests only.
+        // All access protected pages have a private cache-control. This includes pages which are for guests only.
         $cacheControl = $page->cacheControl();
         if (!$cacheControl) {
             $cacheControl = 'private, no-cache, must-revalidate';
@@ -651,28 +756,12 @@ class Login
         $page->cacheControl($cacheControl);
 
         // Deny access if user has not completed 2FA challenge.
+        $user = $event->user;
         if ($user->authenticated && !$user->authorized) {
-            return false;
+            $event->deny();
         }
 
-        // Continue to the page if user is authorized to access the page.
-        foreach ($rules as $rule => $value) {
-            if (is_int($rule)) {
-                if ($user->authorize($value) === true) {
-                    return true;
-                }
-            } elseif (\is_array($value)) {
-                foreach ($value as $nested_rule => $nested_value) {
-                    if ($user->authorize($rule . '.' . $nested_rule) === Utils::isPositive($nested_value)) {
-                        return true;
-                    }
-                }
-            } elseif ($user->authorize($rule) === Utils::isPositive($value)) {
-                return true;
-            }
-        }
-
-        return false;
+        return $event->isAllowed();
     }
 
     /**

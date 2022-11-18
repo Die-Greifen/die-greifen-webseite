@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Form
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -23,6 +23,7 @@ use Grav\Common\User\Interfaces\UserInterface;
 use Grav\Common\Utils;
 use Grav\Framework\Compat\Serializable;
 use Grav\Framework\ContentBlock\HtmlBlock;
+use Grav\Framework\Form\FormFlashFile;
 use Grav\Framework\Form\Interfaces\FormFlashInterface;
 use Grav\Framework\Form\Interfaces\FormInterface;
 use Grav\Framework\Session\SessionInterface;
@@ -57,16 +58,18 @@ trait FormTrait
     private $name;
     /** @var string */
     private $id;
+    /** @var bool */
+    private $enabled = true;
     /** @var string */
     private $uniqueid;
     /** @var string */
     private $sessionid;
     /** @var bool */
     private $submitted;
-    /** @var ArrayAccess|Data|null */
+    /** @var ArrayAccess<string,mixed>|Data|null */
     private $data;
-    /** @var array|UploadedFileInterface[] */
-    private $files;
+    /** @var UploadedFileInterface[] */
+    private $files = [];
     /** @var FormFlashInterface|null */
     private $flash;
     /** @var string */
@@ -88,6 +91,30 @@ trait FormTrait
     public function setId(string $id): void
     {
         $this->id = $id;
+    }
+
+    /**
+     * @return void
+     */
+    public function disable(): void
+    {
+        $this->enabled = false;
+    }
+
+    /**
+     * @return void
+     */
+    public function enable(): void
+    {
+        $this->enabled = true;
+    }
+
+    /**
+     * @return bool
+     */
+    public function isEnabled(): bool
+    {
+        return $this->enabled;
     }
 
     /**
@@ -177,7 +204,7 @@ trait FormTrait
      */
     public function getFiles(): array
     {
-        return $this->files ?? [];
+        return $this->files;
     }
 
     /**
@@ -195,8 +222,8 @@ trait FormTrait
      */
     public function getDefaultValue(string $name)
     {
-        $path = explode('.', $name) ?: [];
-        $offset = array_shift($path) ?? '';
+        $path = explode('.', $name);
+        $offset = array_shift($path);
 
         $current = $this->getDefaultValues();
 
@@ -426,9 +453,9 @@ trait FormTrait
                 'session_id' => $this->getSessionId(),
                 'unique_id' => $this->getUniqueId(),
                 'form_name' => $this->getName(),
-                'folder' => $this->getFlashFolder()
+                'folder' => $this->getFlashFolder(),
+                'id' => $this->getFlashId()
             ];
-
 
             $this->flash = new FormFlash($config);
             $this->flash->setUrl($grav['uri']->url)->setUser($grav['user'] ?? null);
@@ -459,7 +486,8 @@ trait FormTrait
                 'session_id' => $this->getSessionId(),
                 'unique_id' => $uniqueId,
                 'form_name' => $name,
-                'folder' => $this->getFlashFolder()
+                'folder' => $this->getFlashFolder(),
+                'id' => $this->getFlashId()
             ];
             $flash = new FormFlash($config);
             if ($flash->exists() && $flash->getFormName() === $name) {
@@ -588,6 +616,28 @@ trait FormTrait
     }
 
     /**
+     * @return string|null
+     */
+    protected function getFlashId(): ?string
+    {
+        // Fill template token keys/value pairs.
+        $dataMap = [
+            '[FORM_NAME]' => $this->getName(),
+            '[SESSIONID]' => 'session',
+            '[USERNAME]' => '!!',
+            '[USERNAME_OR_SESSIONID]' => '!!',
+            '[ACCOUNT]' => 'account'
+        ];
+
+        $flashLookupFolder = $this->getFlashLookupFolder();
+
+        $path = str_replace(array_keys($dataMap), array_values($dataMap), $flashLookupFolder);
+
+        // Make sure we only return valid paths.
+        return strpos($path, '!!') === false ? rtrim($path, '/') : null;
+    }
+
+    /**
      * @return string
      */
     protected function getFlashLookupFolder(): string
@@ -666,7 +716,7 @@ trait FormTrait
             throw new RuntimeException(sprintf('FlexForm: Bad HTTP method %s', $method));
         }
 
-        $body = $request->getParsedBody();
+        $body = (array)$request->getParsedBody();
         $data = isset($body['data']) ? $this->decodeData($body['data']) : null;
 
         $flash = $this->getFlash();
@@ -685,7 +735,7 @@ trait FormTrait
 
         return [
             $data,
-            $files ?? []
+            $files
         ];
     }
 
@@ -695,6 +745,7 @@ trait FormTrait
      * @param ArrayAccess|Data|null $data
      * @return void
      * @throws ValidationException
+     * @phpstan-param ArrayAccess<string,mixed>|Data|null $data
      * @throws Exception
      */
     protected function validateData($data = null): void
@@ -709,6 +760,7 @@ trait FormTrait
      *
      * @param ArrayAccess|Data|null $data
      * @return void
+     * @phpstan-param ArrayAccess<string,mixed>|Data|null $data
      */
     protected function filterData($data = null): void
     {
@@ -747,12 +799,15 @@ trait FormTrait
     {
         // Handle bad filenames.
         $filename = $file->getClientFilename();
-
         if ($filename && !Utils::checkFilename($filename)) {
             $grav = Grav::instance();
             throw new RuntimeException(
                 sprintf($grav['language']->translate('PLUGIN_FORM.FILEUPLOAD_UNABLE_TO_UPLOAD', null, true), $filename, 'Bad filename')
             );
+        }
+
+        if ($file instanceof FormFlashFile) {
+            $file->checkXss();
         }
     }
 
@@ -771,9 +826,7 @@ trait FormTrait
         // Decode JSON encoded fields and merge them to data.
         if (isset($data['_json'])) {
             $data = array_replace_recursive($data, $this->jsonDecode($data['_json']));
-            if (null === $data) {
-                throw new RuntimeException(__METHOD__ . '(): Unexpected error');
-            }
+
             unset($data['_json']);
         }
 

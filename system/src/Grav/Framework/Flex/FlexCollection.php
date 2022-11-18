@@ -3,7 +3,7 @@
 /**
  * @package    Grav\Framework\Flex
  *
- * @copyright  Copyright (C) 2015 - 2020 Trilby Media, LLC. All rights reserved.
+ * @copyright  Copyright (c) 2015 - 2022 Trilby Media, LLC. All rights reserved.
  * @license    MIT License; see LICENSE file for details.
  */
 
@@ -19,6 +19,7 @@ use Grav\Common\User\Interfaces\UserInterface;
 use Grav\Common\Utils;
 use Grav\Framework\Cache\CacheInterface;
 use Grav\Framework\ContentBlock\HtmlBlock;
+use Grav\Framework\Flex\Interfaces\FlexIndexInterface;
 use Grav\Framework\Flex\Interfaces\FlexObjectInterface;
 use Grav\Framework\Object\ObjectCollection;
 use Grav\Framework\Flex\Interfaces\FlexCollectionInterface;
@@ -37,10 +38,9 @@ use function is_scalar;
 /**
  * Class FlexCollection
  * @package Grav\Framework\Flex
- * @template TKey
  * @template T of FlexObjectInterface
- * @extends ObjectCollection<TKey,T>
- * @implements FlexCollectionInterface<TKey,T>
+ * @extends ObjectCollection<string,T>
+ * @implements FlexCollectionInterface<T>
  */
 class FlexCollection extends ObjectCollection implements FlexCollectionInterface
 {
@@ -48,7 +48,7 @@ class FlexCollection extends ObjectCollection implements FlexCollectionInterface
     private $_flexDirectory;
 
     /** @var string */
-    private $_keyField;
+    private $_keyField = 'storage_key';
 
     /**
      * Get list of cached methods.
@@ -125,6 +125,7 @@ class FlexCollection extends ObjectCollection implements FlexCollectionInterface
      */
     public function getFlexFeatures(): array
     {
+        /** @var array $implements */
         $implements = class_implements($this);
 
         $list = [];
@@ -146,6 +147,10 @@ class FlexCollection extends ObjectCollection implements FlexCollectionInterface
      */
     public function search(string $search, $properties = null, array $options = null)
     {
+        $directory = $this->getFlexDirectory();
+        $properties = $directory->getSearchProperties($properties);
+        $options = $directory->getSearchOptions($options);
+
         $matching = $this->call('search', [$search, $properties, $options]);
         $matching = array_filter($matching);
 
@@ -153,7 +158,11 @@ class FlexCollection extends ObjectCollection implements FlexCollectionInterface
             arsort($matching, SORT_NUMERIC);
         }
 
-        return $this->select(array_keys($matching));
+        /** @var string[] $array */
+        $array = array_keys($matching);
+
+        /** @phpstan-var static<T> */
+        return $this->select($array);
     }
 
     /**
@@ -164,7 +173,7 @@ class FlexCollection extends ObjectCollection implements FlexCollectionInterface
     {
         $criteria = Criteria::create()->orderBy($order);
 
-        /** @var FlexCollectionInterface $matching */
+        /** @phpstan-var FlexCollectionInterface<T> $matching */
         $matching = $this->matching($criteria);
 
         return $matching;
@@ -172,7 +181,8 @@ class FlexCollection extends ObjectCollection implements FlexCollectionInterface
 
     /**
      * @param array $filters
-     * @return FlexCollectionInterface|Collection
+     * @return static
+     * @phpstan-return static<T>
      */
     public function filterBy(array $filters)
     {
@@ -183,6 +193,7 @@ class FlexCollection extends ObjectCollection implements FlexCollectionInterface
             $criteria->andWhere($expr->eq($key, $value));
         }
 
+        /** @phpstan-var static<T> */
         return $this->matching($criteria);
     }
 
@@ -337,6 +348,7 @@ class FlexCollection extends ObjectCollection implements FlexCollectionInterface
      */
     public function getIndex()
     {
+        /** @phpstan-var FlexIndexInterface<T> */
         return $this->getFlexDirectory()->getIndex($this->getKeys(), $this->getKeyField());
     }
 
@@ -460,9 +472,8 @@ class FlexCollection extends ObjectCollection implements FlexCollectionInterface
     /**
      * @param string $key
      * @return array
-     * @phpstan-param TKey $key
      */
-    public function getMetaData(string $key): array
+    public function getMetaData($key): array
     {
         $object = $this->get($key);
 
@@ -483,7 +494,7 @@ class FlexCollection extends ObjectCollection implements FlexCollectionInterface
      */
     public function getKeyField(): string
     {
-        return $this->_keyField ?? 'storage_key';
+        return $this->_keyField;
     }
 
     /**
@@ -491,20 +502,25 @@ class FlexCollection extends ObjectCollection implements FlexCollectionInterface
      * @param string|null $scope
      * @param UserInterface|null $user
      * @return static
-     * @phpstan-return static<TKey,T>
+     * @phpstan-return static<T>
      */
     public function isAuthorized(string $action, string $scope = null, UserInterface $user = null)
     {
         $list = $this->call('isAuthorized', [$action, $scope, $user]);
         $list = array_filter($list);
 
-        return $this->select(array_keys($list));
+        /** @var string[] $keys */
+        $keys = array_keys($list);
+
+        /** @phpstan-var static<T> */
+        return $this->select($keys);
     }
 
     /**
      * @param string $value
      * @param string $field
-     * @return T|null
+     * @return FlexObjectInterface|null
+     * @phpstan-return T|null
      */
     public function find($value, $field = 'id')
     {
@@ -522,6 +538,7 @@ class FlexCollection extends ObjectCollection implements FlexCollectionInterface
     /**
      * @return array
      */
+    #[\ReturnTypeWillChange]
     public function jsonSerialize()
     {
         $elements = [];
@@ -540,6 +557,7 @@ class FlexCollection extends ObjectCollection implements FlexCollectionInterface
     /**
      * @return array
      */
+    #[\ReturnTypeWillChange]
     public function __debugInfo()
     {
         return [
@@ -559,7 +577,7 @@ class FlexCollection extends ObjectCollection implements FlexCollectionInterface
      * @param array $elements Elements.
      * @param string|null $keyField
      * @return static
-     * @phpstan-return static<TKey,T>
+     * @phpstan-return static<T>
      * @throws \InvalidArgumentException
      */
     protected function createFrom(array $elements, $keyField = null)
